@@ -196,6 +196,56 @@ def run_baseline_evaluate(output_dir: Path) -> None:
     print(f"Saved: {out_file}")
 
 
+def run_classical_train(output_dir: Path) -> None:
+    """Train XGBoost + Random Forest on labeled clip features."""
+    from scripts.models.classical import ClassicalAnomalyClassifier
+    clf = ClassicalAnomalyClassifier()
+    logger.info("Training classical models (XGBoost + Random Forest)...")
+    metrics = clf.train()
+    print("\n── Classical ML Results ──────────────────")
+    for k, v in metrics.items():
+        print(f"  {k:<28} {f'{v:.4f}' if isinstance(v, float) else v}")
+    print(f"\nModels saved to models/  |  Eval: data/outputs/classical_eval.json")
+
+
+def run_classical_predict(clip_id: str | None, output_dir: Path) -> None:
+    """Run XGBoost inference on a single clip or all DB clips."""
+    from scripts.models.classical import ClassicalAnomalyClassifier
+    from scripts.build_features import load_features
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    clf = ClassicalAnomalyClassifier()
+    clf.load()
+
+    if clip_id:
+        result = clf.predict(clip_id)
+        print(f"\nClip: {clip_id}")
+        print(f"Anomaly:     {result.is_anomaly}")
+        print(f"Probability: {result.anomaly_probability:.4f}")
+    else:
+        from api.database import SessionLocal
+        from api.models.db_models import Clip, Label
+        db = SessionLocal()
+        try:
+            clip_ids = [str(c.id) for c in db.query(Clip).all()]
+        finally:
+            db.close()
+
+        results = []
+        for cid in clip_ids:
+            try:
+                r = clf.predict(cid)
+                results.append({"clip_id": cid, "is_anomaly": r.is_anomaly,
+                                 "probability": r.anomaly_probability})
+            except FileNotFoundError:
+                results.append({"clip_id": cid, "error": "no features"})
+
+        out_file = output_dir / "classical_results.json"
+        out_file.write_text(json.dumps(results, indent=2))
+        flagged = sum(1 for r in results if r.get("is_anomaly"))
+        print(f"\nProcessed: {len(results)}  Flagged: {flagged}  Output: {out_file}")
+
+
 def main() -> None:
     """Dispatch to the appropriate model handler."""
     args = parse_args()
@@ -209,9 +259,19 @@ def main() -> None:
             run_baseline_predict(args.video, output_dir)
         elif args.evaluate:
             run_baseline_evaluate(output_dir)
+
+    elif args.model == "classical":
+        if args.train:
+            run_classical_train(output_dir)
+        elif args.predict:
+            run_classical_predict(args.video, output_dir)
+        elif args.evaluate:
+            logger.info("Classical evaluation runs automatically during --train via k-fold CV.")
+            run_classical_train(output_dir)
+
     else:
         raise NotImplementedError(
-            f"'{args.model}' implemented in feature/classical-ml and feature/deep-learning."
+            f"'{args.model}' implemented in feature/deep-learning."
         )
 
 
