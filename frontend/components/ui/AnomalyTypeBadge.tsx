@@ -10,9 +10,11 @@ export function AnomalyTypeBadge({ type, className, size = "md" }: AnomalyTypeBa
   return (
     <span
       className={cn(
-        "inline-flex items-center font-mono border rounded-sm",
-        size === "sm" ? "text-[9px] px-1.5 py-0.5 tracking-wider" : "text-[10px] px-2 py-1 tracking-widest",
-        "uppercase font-medium",
+        "inline-flex items-center font-mono border",
+        size === "sm"
+          ? "text-[9px] px-1.5 py-0.5 tracking-wider rounded"
+          : "text-[10px] px-2.5 py-1 tracking-widest rounded-badge",
+        "uppercase font-semibold",
         anomalyBadgeClass(type),
         className
       )}

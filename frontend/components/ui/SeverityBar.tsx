@@ -13,16 +13,19 @@ export function SeverityBar({ severity, className, showLabel = true }: SeverityB
   const color = severityColor(severity);
 
   return (
-    <div className={cn("flex items-center gap-2", className)}>
-      <div className="relative flex-1 h-1 bg-border rounded-full overflow-hidden">
+    <div className={cn("flex items-center gap-2.5", className)}>
+      <div
+        className="relative flex-1 h-1.5 rounded-full overflow-hidden"
+        style={{ background: "rgba(28,45,68,0.8)" }}
+      >
         <div
           className="absolute inset-y-0 left-0 rounded-full transition-all duration-700"
-          style={{ width: `${pct}%`, background: color, boxShadow: `0 0 6px ${color}88` }}
+          style={{ width: `${pct}%`, background: color, boxShadow: `0 0 6px ${color}60` }}
         />
       </div>
       {showLabel && (
         <span
-          className="font-mono text-[10px] w-7 text-right tabular-nums"
+          className="font-mono text-[10px] w-8 text-right tabular-nums flex-shrink-0"
           style={{ color }}
         >
           {pct}%
