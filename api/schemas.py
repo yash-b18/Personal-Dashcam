@@ -65,6 +65,7 @@ class AnomalyDetail(AnomalySummary):
     detection_metadata: dict[str, Any] | None = None
     clip_filename: str | None = None
     front_url: str | None = None
+    rear_url: str | None = None
 
 
 class AnomalyListResponse(BaseModel):

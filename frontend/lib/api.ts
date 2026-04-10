@@ -65,6 +65,7 @@ export interface AnomalyDetail extends AnomalySummary {
   detection_metadata: Record<string, unknown> | null;
   clip_filename: string | null;
   front_url: string | null;
+  rear_url: string | null;
 }
 
 export interface AnomalyListResponse {
