@@ -1,4 +1,6 @@
-.PHONY: setup venv install run worker migrate test lint clean
+.PHONY: setup venv install run worker migrate test lint clean \
+        docker-build docker-up docker-up-d docker-down docker-logs \
+        frontend-install frontend-dev frontend-build
 
 VENV := venv
 PYTHON := $(VENV)/bin/python
@@ -63,6 +65,22 @@ frontend-dev:
 
 frontend-build:
 	cd frontend && npm run build
+
+# ─── Docker ───────────────────────────────────────────────────────
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up
+
+docker-up-d:
+	docker compose up -d
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f
 
 # ─── Clean ────────────────────────────────────────────────────────
 clean:
