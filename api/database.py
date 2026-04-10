@@ -16,12 +16,12 @@ from api.config import get_settings
 def _build_engine():
     """Create the SQLAlchemy engine from settings."""
     settings = get_settings()
-    return create_engine(
-        settings.database_url,
-        pool_pre_ping=True,
-        pool_size=10,
-        max_overflow=20,
-    )
+    url = settings.database_url
+    kwargs: dict = {"pool_pre_ping": True}
+    # SQLite doesn't support connection pooling parameters
+    if not url.startswith("sqlite"):
+        kwargs.update({"pool_size": 10, "max_overflow": 20})
+    return create_engine(url, **kwargs)
 
 
 engine = _build_engine()
