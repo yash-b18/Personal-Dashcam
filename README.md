@@ -11,11 +11,14 @@ DashcamIQ analyzes paired front and rear dashcam footage using computer vision, 
 - [Overview](#overview)
 - [Features](#features)
 - [Architecture](#architecture)
+- [Project Structure](#project-structure)
 - [Setup](#setup)
-- [Branch Guide](#branch-guide)
+- [Data Pipeline](#data-pipeline)
 - [Models](#models)
 - [Application Pages](#application-pages)
+- [Branch Guide](#branch-guide)
 - [Deployment](#deployment)
+- [Environment Variables](#environment-variables)
 
 ---
 
@@ -23,7 +26,7 @@ DashcamIQ analyzes paired front and rear dashcam footage using computer vision, 
 
 DashcamIQ processes 1,200+ paired front/rear dashcam MP4 clips stored on Cloudflare R2. It provides:
 
-1. **Human-in-the-loop labeling** — review clips, flag anomalies with reasons
+1. **Human-in-the-loop labeling** — review clips side-by-side, flag anomalies with reasons
 2. **Three model tiers** — naive baseline, classical ML (XGBoost), and deep learning (YOLOv8 + LSTM)
 3. **Driver scoring** — 100-point per-trip score with A–F grade
 4. **AI explanations** — Claude-generated natural language descriptions of each anomaly
@@ -33,12 +36,12 @@ DashcamIQ processes 1,200+ paired front/rear dashcam MP4 clips stored on Cloudfl
 
 ## Features
 
-- Paired front + rear dashcam video synchronization
-- Anomaly types: hard braking, near-miss, lane departure, traffic violations, tailgating, harsh cornering, aggressive lane changes
+- Paired front + rear dashcam video synchronization via timestamp matching
+- Anomaly types: hard braking, near-miss, lane departure, traffic violations, tailgating, harsh cornering, aggressive lane changes, distracted driving
 - Per-trip and cumulative driver scores with trend tracking
 - Admin labeling interface with keyboard shortcuts
 - Async video processing via Celery + Redis
-- Cloudflare R2 video storage integration
+- Cloudflare R2 video storage integration (S3-compatible)
 
 ---
 
@@ -58,18 +61,70 @@ DashcamIQ processes 1,200+ paired front/rear dashcam MP4 clips stored on Cloudfl
 ┌────────▼──────┐  ┌────────▼──────────────────────┐
 │ PostgreSQL    │  │ Celery + Redis (async tasks)   │
 │ (Railway)     │  │ Video processing pipeline      │
-└───────────────┘  └────────────────────────────────┘
-                            │
-┌───────────────────────────▼────────────────────────┐
+└───────────────┘  └──────────────┬─────────────────┘
+                                  │
+┌─────────────────────────────────▼──────────────────┐
 │  ML Pipeline                                       │
-│  1. Optical Flow Baseline                         │
+│  1. Optical Flow Baseline (no training)            │
 │  2. XGBoost Feature Classifier                    │
 │  3. YOLOv8 + LSTM Temporal Model                  │
-└────────────────────────────────────────────────────┘
-                            │
-┌───────────────────────────▼────────────────────────┐
+└─────────────────────────────────┬──────────────────┘
+                                  │
+┌─────────────────────────────────▼──────────────────┐
 │  Cloudflare R2 — Video Storage                    │
+│  bucket/{main}/{front}/*.mp4                      │
+│  bucket/{main}/{rear}/*.mp4                       │
 └────────────────────────────────────────────────────┘
+```
+
+---
+
+## Project Structure
+
+```
+dashcam-iq/
+├── app.py                      # FastAPI entry point
+├── requirements.txt            # All Python dependencies (pinned)
+├── Makefile                    # venv, install, run, migrate, test shortcuts
+├── setup.py                    # Environment validation + migration runner
+├── .env.example                # Template for all required env vars
+│
+├── api/
+│   ├── config.py               # Pydantic settings (reads from .env)
+│   ├── database.py             # SQLAlchemy engine + get_db dependency
+│   ├── models/
+│   │   └── db_models.py        # ORM tables: Clip, Label, Anomaly, Score, OverallDriverScore
+│   ├── routes/                 # FastAPI routers (videos, anomalies, labels, scores, health)
+│   ├── storage/
+│   │   ├── r2_client.py        # Cloudflare R2 client (list, download, presigned URLs)
+│   │   └── clip_pairer.py      # Pairs front/rear clips by timestamp matching
+│   ├── tasks/
+│   │   ├── celery_app.py       # Celery app configuration
+│   │   └── video_tasks.py      # Async video processing task stubs
+│   └── video/
+│       └── frame_extractor.py  # ffprobe metadata + OpenCV frame extraction
+│
+├── scripts/
+│   ├── make_dataset.py         # R2 ingestion script (pairs + upserts to DB)
+│   ├── build_features.py       # Feature extraction pipeline
+│   ├── model.py                # Train / predict orchestration CLI
+│   ├── scoring.py              # Scoring engine + grade assignment
+│   ├── genai.py                # Claude API explanation generator
+│   └── models/
+│       ├── baseline.py         # Naive optical flow detector
+│       ├── classical.py        # XGBoost classifier
+│       └── deep_learning.py    # YOLOv8 + LSTM classifier
+│
+├── models/                     # Saved model weights (.pt, .pkl)
+├── data/
+│   ├── raw/                    # Local video cache (gitignored)
+│   ├── processed/              # Extracted features (.npz files)
+│   └── outputs/                # Inference results, scores, experiment plots
+│       └── experiment/         # Training sensitivity analysis outputs
+├── notebooks/                  # EDA and experiment notebooks (not graded)
+├── tests/                      # pytest unit + integration tests
+├── alembic/                    # Database migration scripts
+└── frontend/                   # Next.js web application
 ```
 
 ---
@@ -90,11 +145,11 @@ DashcamIQ processes 1,200+ paired front/rear dashcam MP4 clips stored on Cloudfl
 git clone https://github.com/yash-b18/Personal-Dashcam.git
 cd Personal-Dashcam
 
-# Create and activate virtual environment
+# Create and activate virtual environment (never install globally)
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install dependencies
+# Install all dependencies
 pip install -r requirements.txt
 
 # Copy env template and fill in values
@@ -106,8 +161,18 @@ alembic upgrade head
 # Start the API server
 uvicorn app:app --reload
 
-# Start Celery worker (separate terminal, venv activated)
+# Start Celery worker (separate terminal, with venv activated)
 celery -A api.tasks.celery_app worker --loglevel=info
+```
+
+Or use the Makefile shortcuts:
+
+```bash
+make install    # creates venv + installs requirements
+make migrate    # runs alembic upgrade head
+make run        # starts uvicorn
+make worker     # starts celery worker
+make test       # runs pytest
 ```
 
 ### Frontend
@@ -115,45 +180,84 @@ celery -A api.tasks.celery_app worker --loglevel=info
 ```bash
 cd frontend
 npm install
-cp .env.local.example .env.local  # fill in API URL
+cp .env.local.example .env.local   # fill in API URL
 npm run dev
 ```
 
 ---
 
-## Branch Guide
+## Data Pipeline
 
-| Branch | Description |
-|--------|-------------|
-| `feature/project-setup` | Repo scaffolding, DB models, config, requirements, README |
-| `feature/data-pipeline` | Cloudflare R2 integration, video ingestion, frame extraction |
-| `feature/naive-baseline` | Optical flow thresholding anomaly detector |
-| `feature/classical-ml` | Feature extraction + XGBoost/Random Forest classifier |
-| `feature/deep-learning` | YOLOv8 object detection + LSTM temporal classifier |
-| `feature/experiment` | Training set size sensitivity analysis |
-| `feature/scoring-genai` | Scoring engine + Claude API explanation generation |
-| `feature/api-backend` | FastAPI routes, Celery tasks, video streaming |
-| `feature/frontend-core` | Next.js setup, layout, design system |
-| `feature/frontend-labeling` | Admin clip review UI (side-by-side player, thumbs up/down) |
-| `feature/frontend-dashboard` | Driver dashboard (score gauge, charts, trip history) |
-| `feature/frontend-anomalies` | Anomaly explorer + detail view |
-| `feature/deployment` | Docker, Railway config, Vercel config, CI/CD |
+### R2 Bucket Structure
+
+DashcamIQ expects your Cloudflare R2 bucket to follow this layout:
+
+```
+bucket/
+└── {R2_MAIN_FOLDER}/
+    ├── {R2_FRONT_FOLDER}/     # default: "front"
+    │   ├── 20240101_120000.mp4
+    │   ├── 20240101_120300.mp4
+    │   └── ...
+    └── {R2_REAR_FOLDER}/      # default: "rear"
+        ├── 20240101_120000.mp4
+        ├── 20240101_120300.mp4
+        └── ...
+```
+
+### Clip Pairing
+
+Front and rear clips are matched by **timestamp extracted from the filename**. The pairer handles common dashcam naming formats:
+
+| Format | Example |
+|--------|---------|
+| `YYYYMMDD_HHMMSS` | `20240101_120000.mp4` |
+| `YYYY_MM_DD_HH_MM_SS` | `2024_01_01_12_00_00.mp4` |
+| `YYYY-MM-DD_HH-MM-SS` | `2024-01-01_12-00-00.mp4` |
+| Prefix + timestamp | `REC_20240315_083045.mp4` |
+
+Clips whose timestamps are within **5 seconds** of each other are paired. The tolerance is configurable in `api/storage/clip_pairer.py`.
+
+### Ingestion Script
+
+```bash
+# Preview pairs without writing to DB
+python scripts/make_dataset.py --dry-run
+
+# Ingest all clips with duration metadata (slower — downloads each clip)
+python scripts/make_dataset.py
+
+# Fast ingest — skip ffprobe duration extraction
+python scripts/make_dataset.py --no-metadata
+
+# Test with a small batch first
+python scripts/make_dataset.py --limit 20 --dry-run
+```
+
+The script is **idempotent** — safe to re-run. Existing clips are updated; new clips are inserted with `PENDING` processing status.
+
+### Frame Extraction
+
+`api/video/frame_extractor.py` provides:
+- `get_metadata()` — duration, fps, resolution, codec via ffprobe (no full decode)
+- `extract_frames(target_fps)` — lazy frame generator via OpenCV (never loads full video into memory)
+- `extract_clip_segment()` — cuts a short anomaly clip snippet via ffmpeg for display in the UI
 
 ---
 
 ## Models
 
 ### 1. Naive Baseline (`scripts/models/baseline.py`)
-Dense optical flow (Farneback) magnitude thresholding. No training required. Flags clips where inter-frame motion exceeds calibrated thresholds.
+Dense optical flow (Farneback) magnitude thresholding. No training required. Flags clips where inter-frame motion exceeds calibrated thresholds. Implemented in `feature/naive-baseline`.
 
 ### 2. Classical ML (`scripts/models/classical.py`)
-Feature extraction from optical flow statistics and YOLOv8 detections → XGBoost binary classifier. Trains on human-labeled clips.
+Feature extraction (optical flow stats + YOLOv8 detection counts + proximity scores) → XGBoost binary classifier. Trains on human-labeled clips from the labeling interface. Implemented in `feature/classical-ml`.
 
 ### 3. Deep Learning (`scripts/models/deep_learning.py`)
-YOLOv8 per-frame object detection + ByteTrack object tracking → per-frame feature sequences → 2-layer LSTM temporal classifier. Outputs anomaly probability and type.
+YOLOv8 per-frame object detection + ByteTrack object tracking → 30-frame feature sequences → 2-layer bidirectional LSTM classifier. Outputs anomaly probability and type. Implemented in `feature/deep-learning`.
 
 ### Experiment
-Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%, 75%, and 100% of labeled data. Results in `data/outputs/experiment/`.
+Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%, 75%, and 100% of labeled data. Plots and results saved to `data/outputs/experiment/`. Implemented in `feature/experiment`.
 
 ---
 
@@ -161,10 +265,30 @@ Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%
 
 | Page | Route | Description |
 |------|-------|-------------|
-| Dashboard | `/` | Driver score gauge, trend chart, anomaly breakdown, recent incidents |
-| Anomaly Explorer | `/anomalies` | Grid of detected anomalies with clips + AI explanations |
-| Video Library | `/trips` | All processed clips with scores and processing status |
-| Labeling Interface | `/admin/label` | Side-by-side front/rear player with thumbs up/down labeling |
+| Dashboard | `/` | Driver score gauge, trend chart, anomaly breakdown by type, recent incidents feed |
+| Anomaly Explorer | `/anomalies` | Grid of detected anomalies with video clips + AI-generated explanations |
+| Video Library | `/trips` | All processed clips with per-trip scores and processing status |
+| Labeling Interface | `/admin/label` | Side-by-side synced front/rear player with thumbs up/down labeling + keyboard shortcuts |
+
+---
+
+## Branch Guide
+
+| Branch | Status | Description |
+|--------|--------|-------------|
+| `feature/project-setup` | ✅ Merged | Repo scaffolding, DB models, config, requirements, README |
+| `feature/data-pipeline` | ✅ Merged | R2 client, timestamp-based clip pairing, frame extraction, ingestion script |
+| `feature/naive-baseline` | 🔜 | Optical flow thresholding anomaly detector |
+| `feature/classical-ml` | 🔜 | Feature extraction + XGBoost/Random Forest classifier |
+| `feature/deep-learning` | 🔜 | YOLOv8 object detection + LSTM temporal classifier |
+| `feature/experiment` | 🔜 | Training set size sensitivity analysis |
+| `feature/scoring-genai` | 🔜 | Scoring engine + Claude API explanation generation |
+| `feature/api-backend` | 🔜 | Full FastAPI routes, Celery tasks, video streaming |
+| `feature/frontend-core` | 🔜 | Next.js setup, layout, design system |
+| `feature/frontend-labeling` | 🔜 | Admin clip review UI (side-by-side player, thumbs up/down) |
+| `feature/frontend-dashboard` | 🔜 | Driver dashboard (score gauge, charts, trip history) |
+| `feature/frontend-anomalies` | 🔜 | Anomaly explorer + detail view with synced player |
+| `feature/deployment` | 🔜 | Docker, Railway config, Vercel config, CI/CD |
 
 ---
 
@@ -178,7 +302,23 @@ Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%
 
 ## Environment Variables
 
-See `.env.example` for all required configuration values.
+Copy `.env.example` to `.env` and fill in all values. Never commit `.env`.
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_URL` | Redis connection string |
+| `R2_ACCOUNT_ID` | Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | R2 API access key |
+| `R2_SECRET_ACCESS_KEY` | R2 API secret key |
+| `R2_BUCKET_NAME` | Your R2 bucket name |
+| `R2_PUBLIC_URL` | Public URL for the bucket |
+| `R2_MAIN_FOLDER` | Top-level folder in bucket (e.g. `dashcam`) |
+| `R2_FRONT_FOLDER` | Front camera subfolder name (default: `front`) |
+| `R2_REAR_FOLDER` | Rear camera subfolder name (default: `rear`) |
+| `ANTHROPIC_API_KEY` | Claude API key for anomaly explanations |
+| `SECRET_KEY` | App secret for token signing |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins |
 
 ---
 

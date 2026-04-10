@@ -38,6 +38,25 @@ class Settings(BaseSettings):
     r2_secret_access_key: str = Field(..., description="R2 secret access key")
     r2_bucket_name: str = Field(..., description="R2 bucket name")
     r2_public_url: str = Field(..., description="Public R2 bucket URL")
+    # Folder layout: bucket/{r2_main_folder}/{r2_front_folder}/ and /{r2_rear_folder}/
+    r2_main_folder: str = Field(..., description="Top-level folder containing front and rear subfolders")
+    r2_front_folder: str = Field(default="front", description="Subfolder name for front camera videos")
+    r2_rear_folder: str = Field(default="rear", description="Subfolder name for rear camera videos")
+
+    @property
+    def r2_endpoint_url(self) -> str:
+        """Cloudflare R2 S3-compatible endpoint URL."""
+        return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+
+    @property
+    def r2_front_prefix(self) -> str:
+        """Full R2 key prefix for front camera videos."""
+        return f"{self.r2_main_folder}/{self.r2_front_folder}/"
+
+    @property
+    def r2_rear_prefix(self) -> str:
+        """Full R2 key prefix for rear camera videos."""
+        return f"{self.r2_main_folder}/{self.r2_rear_folder}/"
 
     # ── Claude API ─────────────────────────────────────────────────
     anthropic_api_key: str = Field(..., description="Anthropic API key")
