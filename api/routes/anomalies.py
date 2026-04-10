@@ -82,10 +82,12 @@ def get_anomaly(anomaly_id: uuid.UUID, db: Session = Depends(get_db)) -> Anomaly
 
     clip = db.query(Clip).filter(Clip.id == anomaly.clip_id).first()
     front_url = None
+    rear_url = None
     if clip:
         try:
             r2 = R2Client()
             front_url = r2.presigned_url(clip.r2_key_front, expires_in=3600)
+            rear_url = r2.presigned_url(clip.r2_key_rear, expires_in=3600)
         except Exception:
             pass
 
@@ -104,4 +106,5 @@ def get_anomaly(anomaly_id: uuid.UUID, db: Session = Depends(get_db)) -> Anomaly
         detection_metadata=anomaly.detection_metadata,
         clip_filename=clip.filename_prefix if clip else None,
         front_url=front_url,
+        rear_url=rear_url,
     )
