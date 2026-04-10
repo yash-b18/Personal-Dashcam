@@ -389,6 +389,38 @@ Responses are cached in the DB (`anomalies.ai_explanation`) so the API is only c
 
 ---
 
+## API Endpoints
+
+Base URL: `/api/v1`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/videos` | List all clips (paginated, filter by status) |
+| GET | `/videos/{id}` | Clip detail + presigned front/rear video URLs |
+| POST | `/videos/{id}/process` | Enqueue clip for ML processing (Celery) |
+| POST | `/videos/process-all` | Enqueue all pending clips |
+| GET | `/anomalies` | List anomalies (filter by type, model, severity) |
+| GET | `/anomalies/{id}` | Anomaly detail with AI explanation |
+| GET | `/labels/queue` | Next batch of unlabeled clips for review |
+| POST | `/labels/{clip_id}` | Submit thumbs up/down label |
+| PUT | `/labels/{clip_id}` | Update an existing label |
+| DELETE | `/labels/{clip_id}` | Remove label (return clip to queue) |
+| GET | `/scores/overall` | Current overall driver score + grade |
+| GET | `/scores/history` | Per-clip score history for trend charts |
+| GET | `/scores/dashboard` | All dashboard data in one call |
+| POST | `/scores/recalculate` | Force recompute overall score |
+| GET | `/health` | API health check |
+
+### Celery Processing Pipeline (`api/tasks/video_tasks.py`)
+Triggered via `POST /videos/{id}/process`:
+1. Download front video from Cloudflare R2
+2. Run optical flow baseline detector
+3. Map anomaly windows → AnomalyType heuristic
+4. Compute clip driving score (deductions by severity)
+5. Generate Claude AI explanation per anomaly window
+6. Persist Anomaly + Score rows to PostgreSQL
+7. Update clip status → DONE (or FAILED on error, with 3 auto-retries)
+
 ## Application Pages
 
 | Page | Route | Description |
@@ -411,7 +443,7 @@ Responses are cached in the DB (`anomalies.ai_explanation`) so the API is only c
 | `feature/deep-learning` | ✅ | YOLOv8 object detection + LSTM temporal classifier |
 | `feature/experiment` | ✅ | Training set size sensitivity analysis |
 | `feature/scoring-genai` | ✅ | Scoring engine + Claude API explanation generation |
-| `feature/api-backend` | 🔜 | Full FastAPI routes, Celery tasks, video streaming |
+| `feature/api-backend` | ✅ | Full FastAPI routes, Celery tasks, video streaming |
 | `feature/frontend-core` | 🔜 | Next.js setup, layout, design system |
 | `feature/frontend-labeling` | 🔜 | Admin clip review UI (side-by-side player, thumbs up/down) |
 | `feature/frontend-dashboard` | 🔜 | Driver dashboard (score gauge, charts, trip history) |
