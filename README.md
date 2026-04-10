@@ -125,8 +125,8 @@ npm run dev
 
 | Branch | Description |
 |--------|-------------|
-| `feature/project-setup` | Repo scaffolding, DB models, config, requirements, README |
-| `feature/data-pipeline` | Cloudflare R2 integration, video ingestion, frame extraction |
+| `feature/project-setup` | ✅ Repo scaffolding, DB models, config, requirements, README |
+| `feature/data-pipeline` | ✅ Cloudflare R2 client, timestamp-based clip pairing, frame extraction, ingestion script |
 | `feature/naive-baseline` | Optical flow thresholding anomaly detector |
 | `feature/classical-ml` | Feature extraction + XGBoost/Random Forest classifier |
 | `feature/deep-learning` | YOLOv8 object detection + LSTM temporal classifier |
@@ -176,9 +176,33 @@ Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%
 
 ---
 
+## Data Ingestion
+
+Once your `.env` is configured with R2 credentials, run:
+
+```bash
+# Preview without writing to DB
+python scripts/make_dataset.py --dry-run
+
+# Ingest all clips (downloads front clip briefly to get duration)
+python scripts/make_dataset.py
+
+# Fast ingest — skip duration extraction
+python scripts/make_dataset.py --no-metadata
+```
+
+The script pairs front/rear clips by matching timestamps in filenames.
+Clips are identified by datetime embedded in the filename (e.g. `20240101_120000.mp4`).
+Front and rear clips within 5 seconds of each other are paired automatically.
+
 ## Environment Variables
 
 See `.env.example` for all required configuration values.
+
+Key R2 variables:
+- `R2_MAIN_FOLDER` — top-level folder in your bucket (e.g. `dashcam`)
+- `R2_FRONT_FOLDER` — subfolder for front camera clips (default: `front`)
+- `R2_REAR_FOLDER` — subfolder for rear camera clips (default: `rear`)
 
 ---
 
