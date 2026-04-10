@@ -248,7 +248,24 @@ The script is **idempotent** — safe to re-run. Existing clips are updated; new
 ## Models
 
 ### 1. Naive Baseline (`scripts/models/baseline.py`)
-Dense optical flow (Farneback) magnitude thresholding. No training required. Flags clips where inter-frame motion exceeds calibrated thresholds. Implemented in `feature/naive-baseline`.
+Dense optical flow (Farneback) magnitude thresholding. No training required. Processes frames at 640px wide for speed, flags clips where inter-frame motion or motion variance exceeds calibrated thresholds, and merges overlapping windows into clean anomaly segments with timestamps and severity scores.
+
+```bash
+# Run on a single local video
+python scripts/model.py --predict --model baseline --video path/to/clip.mp4
+
+# Run on all pending clips in the DB (downloads from R2)
+python scripts/model.py --predict --model baseline
+
+# Evaluate against labeled clips (requires labeled data from admin UI)
+python scripts/model.py --evaluate --model baseline
+```
+
+Key thresholds (tunable in `scripts/models/baseline.py`):
+- `MAGNITUDE_THRESHOLD = 12.0` — mean flow magnitude (px/frame) to flag a window
+- `VARIANCE_THRESHOLD = 6.0` — std dev spike to flag erratic motion
+- `WINDOW_SIZE_FRAMES = 30` — ~1 second at 30fps
+- Results saved to `data/outputs/baseline_results.json`
 
 ### 2. Classical ML (`scripts/models/classical.py`)
 Feature extraction (optical flow stats + YOLOv8 detection counts + proximity scores) → XGBoost binary classifier. Trains on human-labeled clips from the labeling interface. Implemented in `feature/classical-ml`.
@@ -278,7 +295,7 @@ Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%
 |--------|--------|-------------|
 | `feature/project-setup` | ✅ Merged | Repo scaffolding, DB models, config, requirements, README |
 | `feature/data-pipeline` | ✅ Merged | R2 client, timestamp-based clip pairing, frame extraction, ingestion script |
-| `feature/naive-baseline` | 🔜 | Optical flow thresholding anomaly detector |
+| `feature/naive-baseline` | ✅ | Optical flow thresholding anomaly detector |
 | `feature/classical-ml` | 🔜 | Feature extraction + XGBoost/Random Forest classifier |
 | `feature/deep-learning` | 🔜 | YOLOv8 object detection + LSTM temporal classifier |
 | `feature/experiment` | 🔜 | Training set size sensitivity analysis |
