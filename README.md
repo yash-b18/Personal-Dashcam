@@ -180,9 +180,21 @@ make test       # runs pytest
 ```bash
 cd frontend
 npm install
-cp .env.local.example .env.local   # fill in API URL
+# .env.local is pre-configured for local development (API at localhost:8000)
 npm run dev
 ```
+
+The frontend runs at `http://localhost:3000` and proxies all `/api/v1/*` requests to the FastAPI backend via Next.js rewrites (configured in `next.config.mjs`).
+
+**Design system**: "Black Box" industrial theme — `#0C0C0E` void background, amber (`#F59E0B`) accents, Barlow Condensed for headings, IBM Plex Mono for data readouts.
+
+**Pages:**
+| Route | Description |
+|---|---|
+| `/` | Driver Dashboard — score gauge, trend chart, anomaly breakdown |
+| `/anomalies` | Anomaly Explorer — filterable card grid with detail modal |
+| `/trips` | Video Library — paginated table with inline processing trigger |
+| `/admin/label` | Label Queue — synced video player, thumbs up/down, keyboard shortcuts |
 
 ---
 

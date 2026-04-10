@@ -1,0 +1,273 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@300;400;500;600&family=Inter:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Variables ──────────────────────────────────────────────────────────── */
+:root {
+  --font-barlow-condensed: 'Barlow Condensed', sans-serif;
+  --font-ibm-plex-mono:    'IBM Plex Mono', monospace;
+  --font-inter:            'Inter', sans-serif;
+
+  --color-void:    #0C0C0E;
+  --color-surface: #111115;
+  --color-panel:   #17171D;
+  --color-border:  #252530;
+  --color-muted:   #3A3A48;
+  --color-amber:   #F59E0B;
+  --color-crimson: #EF4444;
+  --color-emerald: #10B981;
+  --color-sapphire:#3B82F6;
+  --color-ink-primary:   #F0F0F4;
+  --color-ink-secondary: #8888A0;
+  --color-ink-tertiary:  #555568;
+
+  --sidebar-width: 220px;
+}
+
+/* ── Base reset ─────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--color-void);
+  color: var(--color-ink-primary);
+  font-family: var(--font-inter);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Scrollbar styling ──────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-surface);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-muted);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-amber);
+}
+
+/* ── Typography utilities ───────────────────────────────────────────────────── */
+@layer utilities {
+  .font-display   { font-family: var(--font-barlow-condensed); }
+  .font-mono-data { font-family: var(--font-ibm-plex-mono); }
+
+  .text-display-xl {
+    font-family: var(--font-barlow-condensed);
+    font-size: clamp(3rem, 8vw, 7rem);
+    font-weight: 800;
+    line-height: 0.9;
+    letter-spacing: -0.02em;
+  }
+  .text-display-lg {
+    font-family: var(--font-barlow-condensed);
+    font-size: clamp(2rem, 5vw, 4rem);
+    font-weight: 700;
+    line-height: 0.95;
+    letter-spacing: -0.01em;
+  }
+  .text-display-md {
+    font-family: var(--font-barlow-condensed);
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .text-label {
+    font-family: var(--font-ibm-plex-mono);
+    font-size: 0.625rem;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .text-data {
+    font-family: var(--font-ibm-plex-mono);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+}
+
+/* ── Component utilities ────────────────────────────────────────────────────── */
+@layer components {
+  /* Panel / card base */
+  .panel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+  }
+
+  /* Amber accent line (top border) */
+  .panel-accent {
+    border-top: 2px solid var(--color-amber);
+  }
+
+  /* Inset label */
+  .section-label {
+    font-family: var(--font-ibm-plex-mono);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-amber);
+  }
+
+  /* Clickable row hover */
+  .row-hover {
+    transition: background 0.15s ease;
+  }
+  .row-hover:hover {
+    background: rgba(245, 158, 11, 0.06);
+  }
+
+  /* Score grade colors */
+  .grade-a { color: #10B981; }
+  .grade-b { color: #3B82F6; }
+  .grade-c { color: #F59E0B; }
+  .grade-d { color: #F97316; }
+  .grade-f { color: #EF4444; }
+
+  /* Anomaly type badge colors */
+  .badge-hard-braking       { background: rgba(239,68,68,0.15);  color: #EF4444;  border-color: rgba(239,68,68,0.3); }
+  .badge-near-miss          { background: rgba(239,68,68,0.25);  color: #FCA5A5;  border-color: rgba(239,68,68,0.5); }
+  .badge-lane-departure     { background: rgba(245,158,11,0.15); color: #F59E0B;  border-color: rgba(245,158,11,0.3); }
+  .badge-traffic-violation  { background: rgba(239,68,68,0.2);   color: #F87171;  border-color: rgba(239,68,68,0.4); }
+  .badge-tailgating         { background: rgba(249,115,22,0.15); color: #F97316;  border-color: rgba(249,115,22,0.3); }
+  .badge-aggressive-lane-change { background: rgba(234,179,8,0.15); color: #EAB308; border-color: rgba(234,179,8,0.3); }
+  .badge-harsh-cornering    { background: rgba(59,130,246,0.15); color: #3B82F6;  border-color: rgba(59,130,246,0.3); }
+  .badge-other              { background: rgba(136,136,160,0.15); color: #8888A0; border-color: rgba(136,136,160,0.3); }
+
+  /* Status badge */
+  .status-done       { color: #10B981; }
+  .status-pending    { color: #F59E0B; }
+  .status-processing { color: #3B82F6; }
+  .status-error      { color: #EF4444; }
+}
+
+/* ── Grid background ────────────────────────────────────────────────────────── */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(37,37,48,0.4) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37,37,48,0.4) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* ── Amber glow effect ──────────────────────────────────────────────────────── */
+.amber-glow {
+  filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.5));
+}
+
+/* ── Scanline overlay (decorative) ─────────────────────────────────────────── */
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.04) 2px,
+    rgba(0, 0, 0, 0.04) 4px
+  );
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* ── Noise texture ──────────────────────────────────────────────────────────── */
+.noise {
+  position: relative;
+}
+.noise::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  opacity: 0.6;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* ── Sidebar active state ───────────────────────────────────────────────────── */
+.nav-link {
+  position: relative;
+  transition: all 0.15s ease;
+}
+.nav-link.active {
+  color: var(--color-amber);
+  background: rgba(245, 158, 11, 0.08);
+}
+.nav-link.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-amber);
+}
+
+/* ── Animated score ring ────────────────────────────────────────────────────── */
+@keyframes ring-fill {
+  from { stroke-dashoffset: 502; }
+}
+
+/* ── Loading shimmer ────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-panel) 25%,
+    var(--color-border) 50%,
+    var(--color-panel) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ── Custom select ──────────────────────────────────────────────────────────── */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238888A0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+/* ── Focus ring ─────────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 1px solid var(--color-amber);
+  outline-offset: 2px;
+}
+
+/* ── Video player chrome ────────────────────────────────────────────────────── */
+video {
+  border-radius: 2px;
+}
+video::-webkit-media-controls-panel {
+  background: var(--color-panel);
+}
