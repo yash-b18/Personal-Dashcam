@@ -21,6 +21,59 @@ from api.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+def _recalculate_overall_score(db) -> None:
+    """
+    Recompute the OverallDriverScore from all per-clip Score rows.
+    Called automatically after every clip finishes processing.
+    """
+    from api.models.db_models import ModelType, OverallDriverScore, Score
+    from scripts.scoring import ClipScoreResult, compute_overall_score, assign_grade
+
+    # Fetch all baseline scores (one per clip)
+    score_rows = (
+        db.query(Score)
+        .filter(Score.model_type == ModelType.BASELINE)
+        .all()
+    )
+    if not score_rows:
+        return
+
+    clip_scores = [
+        ClipScoreResult(
+            clip_id=str(row.clip_id),
+            score=row.score,
+            grade=row.grade,
+            anomaly_count=row.anomaly_count,
+            deduction_breakdown={},
+        )
+        for row in score_rows
+    ]
+
+    result = compute_overall_score(clip_scores)
+
+    # Upsert OverallDriverScore (keep only one row)
+    existing = db.query(OverallDriverScore).first()
+    if existing:
+        existing.score = result.score
+        existing.grade = result.grade
+        existing.clips_analyzed = result.clips_analyzed
+        existing.breakdown = result.breakdown
+        existing.calculated_at = datetime.now(timezone.utc)
+    else:
+        db.add(OverallDriverScore(
+            score=result.score,
+            grade=result.grade,
+            clips_analyzed=result.clips_analyzed,
+            breakdown=result.breakdown,
+            calculated_at=datetime.now(timezone.utc),
+        ))
+    db.commit()
+    logger.info(
+        "Overall score recalculated: %.1f %s (%d clips)",
+        result.score, result.grade, result.clips_analyzed,
+    )
+
+
 def _heuristic_anomaly_type(window: dict, clip_severity: float) -> str:
     """
     Map a baseline anomaly window to an AnomalyType based on heuristics.
@@ -196,6 +249,12 @@ def process_clip(self, clip_id: str) -> dict:
         clip.processed_at = datetime.now(timezone.utc)
         clip.processing_error = None
         db.commit()
+
+        # ── 8. Recalculate overall driver score ───────────────────────────
+        try:
+            _recalculate_overall_score(db)
+        except Exception as exc:
+            logger.warning("[%s] Overall score recalc failed: %s", clip.filename_prefix, exc)
 
         logger.info(
             "[%s] Done — score=%.1f grade=%s anomalies=%d",
