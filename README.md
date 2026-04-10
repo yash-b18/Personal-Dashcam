@@ -323,8 +323,34 @@ Key parameters (tunable in `scripts/models/deep_learning.py`):
 - Model weights saved to `models/dl_lstm.pt`
 - Training history (loss/F1/AUC per epoch) saved to `data/outputs/dl_eval.json`
 
-### Experiment
-Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%, 75%, and 100% of labeled data. Plots and results saved to `data/outputs/experiment/`. Implemented in `feature/experiment`.
+### Experiment — Training Set Size Sensitivity Analysis (`scripts/experiment.py`)
+Answers: *"How many labeled clips do we need before each model becomes reliable?"*
+
+- Trains both Classical (XGBoost) and Deep Learning (LSTM) at **10%, 25%, 50%, 75%, and 100%** of available labeled data
+- Each fraction repeated N times (default 3) with different seeds for error bars
+- Fixed held-out test set (20% of labeled data) used across all fractions
+- Metrics: F1, AUC-ROC, Precision, Recall — mean ± std per fraction
+- Outputs a data-driven recommendation: minimum fraction to reach F1 ≥ 70%
+
+```bash
+# Run full experiment (both models, 3 repeats per fraction)
+python scripts/experiment.py
+
+# Classical only (faster, no GPU needed)
+python scripts/experiment.py --model classical
+
+# Fewer repeats for quick iteration
+python scripts/experiment.py --n-repeats 1
+
+# Custom features directory
+python scripts/experiment.py --features-dir data/processed --output-dir data/outputs/experiment
+```
+
+Outputs saved to `data/outputs/experiment/`:
+- `experiment_results.json` — all metrics with mean ± std per fraction
+- `experiment_f1.png` — F1 learning curves with error bands
+- `experiment_auc.png` — AUC-ROC learning curves with error bands
+- `experiment_combined.png` — side-by-side F1 + AUC panel plot
 
 ---
 
@@ -348,7 +374,7 @@ Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%
 | `feature/naive-baseline` | ✅ | Optical flow thresholding anomaly detector |
 | `feature/classical-ml` | ✅ | 19-feature extraction pipeline + XGBoost + Random Forest classifier |
 | `feature/deep-learning` | ✅ | YOLOv8 object detection + LSTM temporal classifier |
-| `feature/experiment` | 🔜 | Training set size sensitivity analysis |
+| `feature/experiment` | ✅ | Training set size sensitivity analysis |
 | `feature/scoring-genai` | 🔜 | Scoring engine + Claude API explanation generation |
 | `feature/api-backend` | 🔜 | Full FastAPI routes, Celery tasks, video streaming |
 | `feature/frontend-core` | 🔜 | Next.js setup, layout, design system |
