@@ -46,6 +46,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--video", type=str, default=None, help="Single video file path")
     parser.add_argument("--output", type=str, default="data/outputs")
+    parser.add_argument(
+        "--extract-dl-features",
+        action="store_true",
+        help="Extract DL feature sequences for all labeled clips (deep_learning only)",
+    )
+    parser.add_argument(
+        "--features-dir", type=str, default="data/processed",
+        help="Directory for feature .npz files",
+    )
     return parser.parse_args()
 
 
@@ -246,6 +255,116 @@ def run_classical_predict(clip_id: str | None, output_dir: Path) -> None:
         print(f"\nProcessed: {len(results)}  Flagged: {flagged}  Output: {out_file}")
 
 
+def run_dl_extract_features(video_path: str | None, features_dir: Path) -> None:
+    """Extract DL feature sequences for a single video or all labeled DB clips."""
+    from api.video.sequence_builder import SequenceBuilder, save_dl_features
+
+    builder = SequenceBuilder()
+    features_dir.mkdir(parents=True, exist_ok=True)
+
+    if video_path:
+        clip_id = Path(video_path).stem
+        logger.info("Extracting DL features from %s", video_path)
+        sequences = builder.build_sequences(video_path)
+        out = save_dl_features(clip_id, sequences, output_dir=features_dir)
+        print(f"Saved {len(sequences)} windows → {out}")
+        return
+
+    from api.database import SessionLocal
+    from api.models.db_models import Clip, Label
+    from api.storage.r2_client import R2Client
+
+    r2 = R2Client()
+    db = SessionLocal()
+    try:
+        labeled = db.query(Clip, Label).join(Label, Clip.id == Label.clip_id).all()
+        logger.info("Extracting DL features for %d labeled clips", len(labeled))
+        skipped = 0
+        for clip, _label in labeled:
+            out_path = features_dir / f"{clip.id}_dl_features.npz"
+            if out_path.exists():
+                skipped += 1
+                continue
+            tmp_path = None
+            try:
+                tmp_path = r2.download_to_temp(clip.r2_key_front)
+                seqs = builder.build_sequences(tmp_path)
+                save_dl_features(str(clip.id), seqs, output_dir=features_dir)
+                logger.info("[%s] %d windows saved", clip.filename_prefix, len(seqs))
+            except Exception as exc:
+                logger.error("Failed on %s: %s", clip.filename_prefix, exc)
+            finally:
+                if tmp_path and Path(tmp_path).exists():
+                    Path(tmp_path).unlink()
+        print(f"Done. Skipped (already cached): {skipped}")
+    finally:
+        db.close()
+
+
+def run_dl_train(features_dir: Path, output_dir: Path) -> None:
+    """Train the bidirectional LSTM on pre-extracted DL feature sequences."""
+    from scripts.models.deep_learning import LSTMAnomalyClassifier
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    clf = LSTMAnomalyClassifier()
+    logger.info("Training LSTM model on sequences in %s ...", features_dir)
+    history = clf.train(features_dir=features_dir)
+    best_f1 = max(history["val_f1"]) if history["val_f1"] else 0.0
+    best_auc = max(history["val_auc"]) if history["val_auc"] else 0.0
+    print("\n── Deep Learning LSTM Results ────────────")
+    print(f"  Best val F1:          {best_f1:.4f}")
+    print(f"  Best val AUC-ROC:     {best_auc:.4f}")
+    print(f"  Epochs trained:       {len(history['val_f1'])}")
+    print(f"  Model saved:          models/dl_lstm.pt")
+    print(f"  Eval saved:           data/outputs/dl_eval.json")
+
+
+def run_dl_predict(video_path: str | None, features_dir: Path, output_dir: Path) -> None:
+    """Run LSTM inference on a single video or all clips with pre-extracted features."""
+    from scripts.models.deep_learning import LSTMAnomalyClassifier
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    clf = LSTMAnomalyClassifier()
+
+    if video_path:
+        clip_id = Path(video_path).stem
+        logger.info("Running DL inference on: %s", video_path)
+        result = clf.predict_from_video(video_path, clip_id)
+        print(f"\nClip:         {clip_id}")
+        print(f"Anomaly:      {result.is_anomaly}")
+        print(f"Probability:  {result.anomaly_probability:.4f}")
+        print(f"Windows:      {len(result.anomaly_windows)}")
+        if result.error:
+            print(f"Error:        {result.error}")
+        return
+
+    import glob as _glob, json as _json
+    feature_files = list(features_dir.glob("*_dl_features.npz"))
+    if not feature_files:
+        print("No DL feature files found. Run --extract-dl-features first.")
+        return
+
+    results = []
+    for f in feature_files:
+        clip_id = f.name.replace("_dl_features.npz", "")
+        try:
+            clf.load()
+            r = clf.predict(clip_id, features_dir=features_dir)
+            results.append({
+                "clip_id": clip_id,
+                "is_anomaly": r.is_anomaly,
+                "probability": r.anomaly_probability,
+                "n_anomaly_windows": len(r.anomaly_windows),
+            })
+        except Exception as exc:
+            results.append({"clip_id": clip_id, "error": str(exc)})
+
+    out_file = output_dir / "dl_results.json"
+    out_file.write_text(_json.dumps(results, indent=2))
+    flagged = sum(1 for r in results if r.get("is_anomaly"))
+    print(f"\nProcessed: {len(results)}  Flagged: {flagged}  Output: {out_file}")
+
+
 def main() -> None:
     """Dispatch to the appropriate model handler."""
     args = parse_args()
@@ -269,10 +388,19 @@ def main() -> None:
             logger.info("Classical evaluation runs automatically during --train via k-fold CV.")
             run_classical_train(output_dir)
 
+    elif args.model == "deep_learning":
+        if args.extract_dl_features:
+            run_dl_extract_features(args.video, Path(args.features_dir))
+        elif args.train:
+            run_dl_train(Path(args.features_dir), output_dir)
+        elif args.predict:
+            run_dl_predict(args.video, Path(args.features_dir), output_dir)
+        elif args.evaluate:
+            logger.info("DL evaluation runs automatically during --train (loss/F1/AUC history saved).")
+            run_dl_train(Path(args.features_dir), output_dir)
+
     else:
-        raise NotImplementedError(
-            f"'{args.model}' implemented in feature/deep-learning."
-        )
+        raise NotImplementedError(f"Unknown model: {args.model}")
 
 
 if __name__ == "__main__":

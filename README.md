@@ -284,7 +284,44 @@ python scripts/model.py --predict --model classical
 Feature groups: optical flow magnitude stats, window-level peaks, motion direction variance, motion blur (Laplacian), edge density changes, temporal spike patterns. Results and feature importances saved to `data/outputs/classical_eval.json`.
 
 ### 3. Deep Learning (`scripts/models/deep_learning.py`)
-YOLOv8 per-frame object detection + ByteTrack object tracking → 30-frame feature sequences → 2-layer bidirectional LSTM classifier. Outputs anomaly probability and type. Implemented in `feature/deep-learning`.
+YOLOv8 per-frame object detection → 13-dim per-frame feature sequences → 2-layer bidirectional LSTM classifier. Outputs anomaly probability per 30-frame sliding window; clip is flagged if any window exceeds threshold.
+
+**Stage 1 — Feature Extraction** (`api/video/sequence_builder.py`):
+- Runs YOLOv8 (`yolov8m.pt`) on every frame to detect vehicles, pedestrians, cyclists, traffic lights, stop signs
+- Computes dense optical flow (Farneback) between consecutive frames
+- Per-frame 13-dim feature vector: object counts + proximity scores + flow magnitude/direction + motion blur + edge density
+- Sliding window: 30 frames (~1 sec at 30fps), 50% overlap → shape `(n_windows, 30, 13)`
+- Sequences cached as `data/processed/{clip_id}_dl_features.npz`
+
+**Stage 2 — LSTM Classifier** (`scripts/models/deep_learning.py`):
+- Bidirectional LSTM (2 layers, hidden=128 → 256 bidirectional output)
+- Mean temporal pooling → FC head (256 → 64 → 1)
+- Training: BCEWithLogitsLoss with `pos_weight` for class imbalance, AdamW, CosineAnnealingLR, early stopping on val F1 (patience=10)
+- Data augmentation: Gaussian noise on features during training
+
+```bash
+# Step 1: extract DL feature sequences for all labeled clips (downloads from R2)
+python scripts/model.py --extract-dl-features --model deep_learning
+
+# Step 1b: extract from a single local video
+python scripts/model.py --extract-dl-features --model deep_learning --video path/to/clip.mp4
+
+# Step 2: train the LSTM (requires labeled clips + extracted features)
+python scripts/model.py --train --model deep_learning
+
+# Step 3: predict on all clips with pre-extracted features
+python scripts/model.py --predict --model deep_learning
+
+# Step 3b: end-to-end inference on a single video (no pre-extraction needed)
+python scripts/model.py --predict --model deep_learning --video path/to/clip.mp4
+```
+
+Key parameters (tunable in `scripts/models/deep_learning.py`):
+- `HIDDEN_DIM = 128` — LSTM hidden units per direction
+- `SEQUENCE_LENGTH = 30` — frames per window
+- `DECISION_THRESHOLD = 0.5` — anomaly probability cutoff
+- Model weights saved to `models/dl_lstm.pt`
+- Training history (loss/F1/AUC per epoch) saved to `data/outputs/dl_eval.json`
 
 ### Experiment
 Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%, 75%, and 100% of labeled data. Plots and results saved to `data/outputs/experiment/`. Implemented in `feature/experiment`.
@@ -310,7 +347,7 @@ Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%
 | `feature/data-pipeline` | ✅ Merged | R2 client, timestamp-based clip pairing, frame extraction, ingestion script |
 | `feature/naive-baseline` | ✅ | Optical flow thresholding anomaly detector |
 | `feature/classical-ml` | ✅ | 19-feature extraction pipeline + XGBoost + Random Forest classifier |
-| `feature/deep-learning` | 🔜 | YOLOv8 object detection + LSTM temporal classifier |
+| `feature/deep-learning` | ✅ | YOLOv8 object detection + LSTM temporal classifier |
 | `feature/experiment` | 🔜 | Training set size sensitivity analysis |
 | `feature/scoring-genai` | 🔜 | Scoring engine + Claude API explanation generation |
 | `feature/api-backend` | 🔜 | Full FastAPI routes, Celery tasks, video streaming |
