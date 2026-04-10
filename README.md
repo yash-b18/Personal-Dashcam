@@ -268,7 +268,20 @@ Key thresholds (tunable in `scripts/models/baseline.py`):
 - Results saved to `data/outputs/baseline_results.json`
 
 ### 2. Classical ML (`scripts/models/classical.py`)
-Feature extraction (optical flow stats + YOLOv8 detection counts + proximity scores) → XGBoost binary classifier. Trains on human-labeled clips from the labeling interface. Implemented in `feature/classical-ml`.
+19 hand-crafted features extracted from optical flow, edge density, and motion blur → XGBoost binary classifier (+ Random Forest for comparison). Features are pre-extracted and cached as `.npz` files so training is fast.
+
+```bash
+# Step 1: extract features for all clips (downloads from R2, saves to data/processed/)
+python scripts/build_features.py --all
+
+# Step 2: train XGBoost + Random Forest with 5-fold CV (requires labeled clips)
+python scripts/model.py --train --model classical
+
+# Step 3: predict on all clips
+python scripts/model.py --predict --model classical
+```
+
+Feature groups: optical flow magnitude stats, window-level peaks, motion direction variance, motion blur (Laplacian), edge density changes, temporal spike patterns. Results and feature importances saved to `data/outputs/classical_eval.json`.
 
 ### 3. Deep Learning (`scripts/models/deep_learning.py`)
 YOLOv8 per-frame object detection + ByteTrack object tracking → 30-frame feature sequences → 2-layer bidirectional LSTM classifier. Outputs anomaly probability and type. Implemented in `feature/deep-learning`.
@@ -296,7 +309,7 @@ Training set size sensitivity analysis: F1 and AUC-ROC measured at 10%, 25%, 50%
 | `feature/project-setup` | ✅ Merged | Repo scaffolding, DB models, config, requirements, README |
 | `feature/data-pipeline` | ✅ Merged | R2 client, timestamp-based clip pairing, frame extraction, ingestion script |
 | `feature/naive-baseline` | ✅ | Optical flow thresholding anomaly detector |
-| `feature/classical-ml` | 🔜 | Feature extraction + XGBoost/Random Forest classifier |
+| `feature/classical-ml` | ✅ | 19-feature extraction pipeline + XGBoost + Random Forest classifier |
 | `feature/deep-learning` | 🔜 | YOLOv8 object detection + LSTM temporal classifier |
 | `feature/experiment` | 🔜 | Training set size sensitivity analysis |
 | `feature/scoring-genai` | 🔜 | Scoring engine + Claude API explanation generation |
