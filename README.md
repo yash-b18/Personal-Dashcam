@@ -354,6 +354,41 @@ Outputs saved to `data/outputs/experiment/`:
 
 ---
 
+## Scoring & AI Explanations
+
+### Scoring Engine (`scripts/scoring.py`)
+Converts anomaly detections into a 0–100 driving score per clip and an exponentially weighted overall score.
+
+- **Per-clip score**: Base 100, deductions per anomaly = `severity × MAX_DEDUCTIONS[type]`
+- **Same-type cap**: Multiple anomalies of the same type capped at `1.5 × MAX_DEDUCTIONS[type]` to prevent runaway deductions
+- **Overall score**: Exponential recency weighting (`decay=0.9`) — recent trips count more
+
+| Anomaly Type | Max Deduction |
+|---|---|
+| Traffic violation | 30 pts |
+| Near-miss | 25 pts |
+| Lane departure | 20 pts |
+| Distracted driving | 20 pts |
+| Hard braking | 15 pts |
+| Tailgating | 15 pts |
+| Aggressive lane change | 15 pts |
+| Hard acceleration | 10 pts |
+| Harsh cornering | 10 pts |
+
+Grades: A ≥ 90 · B ≥ 80 · C ≥ 70 · D ≥ 60 · F < 60
+
+### AI Explanations (`scripts/genai.py`)
+Calls `claude-sonnet-4-6` to generate natural language explanations for each detected anomaly.
+
+Each explanation includes:
+1. **What happened** — 2–3 sentence description of the event and why it's a safety concern
+2. **Recommendation** — one specific, actionable tip for the driver
+3. **Score impact** — plain-language statement of points deducted
+
+Responses are cached in the DB (`anomalies.ai_explanation`) so the API is only called once per anomaly. Requires `ANTHROPIC_API_KEY` in `.env`.
+
+---
+
 ## Application Pages
 
 | Page | Route | Description |
@@ -375,7 +410,7 @@ Outputs saved to `data/outputs/experiment/`:
 | `feature/classical-ml` | ✅ | 19-feature extraction pipeline + XGBoost + Random Forest classifier |
 | `feature/deep-learning` | ✅ | YOLOv8 object detection + LSTM temporal classifier |
 | `feature/experiment` | ✅ | Training set size sensitivity analysis |
-| `feature/scoring-genai` | 🔜 | Scoring engine + Claude API explanation generation |
+| `feature/scoring-genai` | ✅ | Scoring engine + Claude API explanation generation |
 | `feature/api-backend` | 🔜 | Full FastAPI routes, Celery tasks, video streaming |
 | `feature/frontend-core` | 🔜 | Next.js setup, layout, design system |
 | `feature/frontend-labeling` | 🔜 | Admin clip review UI (side-by-side player, thumbs up/down) |
