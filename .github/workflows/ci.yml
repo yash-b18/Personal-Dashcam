@@ -1,0 +1,151 @@
+# ── DashcamIQ — CI Pipeline ───────────────────────────────────────────────────
+#
+# Runs on every push to develop and main, and on all PRs.
+#
+# Jobs:
+#   backend-lint    → ruff check + format
+#   backend-test    → pytest with a live Postgres + Redis via services
+#   frontend-build  → Next.js build check (type errors fail the build)
+#
+# Secrets required (set in GitHub → Settings → Secrets):
+#   None required for CI; Railway/Vercel deploy via their own GitHub integrations.
+# ────────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+
+  # ── Backend: lint ────────────────────────────────────────────────────────────
+  backend-lint:
+    name: Backend Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install ruff
+        run: pip install ruff==0.8.3
+
+      - name: Run ruff check
+        run: ruff check . --output-format=github
+
+      - name: Run ruff format check
+        run: ruff format . --check
+
+  # ── Backend: test ────────────────────────────────────────────────────────────
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    needs: backend-lint
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dashcam
+          POSTGRES_PASSWORD: dashcam
+          POSTGRES_DB: dashcamiq_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgresql://dashcam:dashcam@localhost:5432/dashcamiq_test
+      REDIS_URL: redis://localhost:6379/0
+      APP_ENV: development
+      SECRET_KEY: ci-test-secret-key
+      ALLOWED_ORIGINS: http://localhost:3000
+      # R2 values stubbed — tests mock the R2 client
+      R2_ACCOUNT_ID: test
+      R2_ACCESS_KEY_ID: test
+      R2_SECRET_ACCESS_KEY: test
+      R2_BUCKET_NAME: test
+      R2_PUBLIC_URL: https://test.r2.dev
+      R2_MAIN_FOLDER: test
+      # Anthropic stubbed — tests mock the Claude client
+      ANTHROPIC_API_KEY: sk-ant-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0 ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          # Install CPU-only torch to avoid 2GB+ download in CI
+          pip install torch==2.5.1 torchvision==0.20.1 \
+            --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+  # ── Frontend: type-check + build ─────────────────────────────────────────────
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_OUTPUT: standalone

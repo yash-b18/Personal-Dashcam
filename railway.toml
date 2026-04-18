@@ -1,0 +1,29 @@
+# ── DashcamIQ — Railway deployment config ─────────────────────────────────────
+#
+# Deploy the FastAPI backend + Celery worker on Railway.
+#
+# Setup steps:
+#   1. Create a new Railway project
+#   2. Add a PostgreSQL plugin  → Railway auto-injects DATABASE_URL
+#   3. Add a Redis plugin       → Railway auto-injects REDIS_URL
+#   4. Set the env vars below in Railway's Variables panel (from .env.example)
+#   5. Push to main → Railway auto-deploys
+#
+# Required env vars to set manually in Railway:
+#   SECRET_KEY, APP_ENV=production,
+#   ALLOWED_ORIGINS=https://your-vercel-app.vercel.app,
+#   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+#   R2_BUCKET_NAME, R2_PUBLIC_URL, R2_MAIN_FOLDER,
+#   ANTHROPIC_API_KEY
+# ────────────────────────────────────────────────────────────────────────────────
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "alembic upgrade head && uvicorn app:app --host 0.0.0.0 --port $PORT --workers 2"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
