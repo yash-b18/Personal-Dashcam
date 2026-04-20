@@ -67,15 +67,10 @@ def build_lstm_model(
     Returns:
         nn.Module — the AnomalyLSTM model.
     """
+    import torch
     import torch.nn as nn
 
     class AnomalyLSTM(nn.Module):
-        """
-        Bidirectional LSTM for temporal anomaly detection in dashcam footage.
-
-        Input:  (batch, seq_len, input_dim)
-        Output: (batch,) — raw logit per sequence window
-        """
 
         def __init__(self) -> None:
             super().__init__()
@@ -87,7 +82,8 @@ def build_lstm_model(
                 bidirectional=True,
                 dropout=dropout if num_layers > 1 else 0.0,
             )
-            lstm_out_dim = 2 * hidden_dim   # bidirectional
+            lstm_out_dim = 2 * hidden_dim
+            self.attn_w = nn.Linear(lstm_out_dim, 1, bias=False)
             self.classifier = nn.Sequential(
                 nn.Linear(lstm_out_dim, 64),
                 nn.ReLU(),
@@ -96,17 +92,93 @@ def build_lstm_model(
             )
 
         def forward(self, x):
-            """
-            Args:
-                x: Tensor (batch, seq_len, input_dim)
-            Returns:
-                Tensor (batch,) — logits (apply sigmoid for probabilities)
-            """
-            lstm_out, _ = self.lstm(x)          # (batch, seq_len, 2*hidden_dim)
-            pooled = lstm_out.mean(dim=1)        # (batch, 2*hidden_dim)
-            return self.classifier(pooled).squeeze(-1)  # (batch,)
+            lstm_out, _ = self.lstm(x)              # (batch, seq_len, 2*hidden_dim)
+            attn_scores = self.attn_w(lstm_out)     # (batch, seq_len, 1)
+            attn_weights = torch.softmax(attn_scores, dim=1)
+            pooled = (lstm_out * attn_weights).sum(dim=1)  # (batch, 2*hidden_dim)
+            return self.classifier(pooled).squeeze(-1)
 
     return AnomalyLSTM()
+
+
+def build_transformer_model(
+    input_dim: int = FEATURE_DIM,
+    d_model: int = 128,
+    nhead: int = 4,
+    num_layers: int = 2,
+    dropout: float = 0.4,
+    label_smoothing: float = 0.1,
+):
+    import math
+    import torch
+    import torch.nn as nn
+
+    class PositionalEncoding(nn.Module):
+        def __init__(self, d_model: int, max_len: int = 100, dropout: float = 0.1) -> None:
+            super().__init__()
+            self.dropout = nn.Dropout(dropout)
+            pe = torch.zeros(max_len, d_model)
+            position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+            div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            self.register_buffer("pe", pe.unsqueeze(0))
+
+        def forward(self, x):
+            return self.dropout(x + self.pe[:, :x.size(1)])
+
+    class AnomalyTransformer(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.input_proj = nn.Sequential(
+                nn.Linear(input_dim, d_model),
+                nn.LayerNorm(d_model),
+            )
+            self.pos_enc = PositionalEncoding(d_model, max_len=SEQUENCE_LENGTH + 10, dropout=dropout)
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model, nhead=nhead, dim_feedforward=d_model * 2,
+                dropout=dropout, batch_first=True, activation="gelu",
+                norm_first=True,
+            )
+            self.encoder = nn.TransformerEncoder(
+                encoder_layer, num_layers=num_layers,
+                norm=nn.LayerNorm(d_model),
+            )
+            self.attn_w = nn.Linear(d_model, 1, bias=False)
+            self.classifier = nn.Sequential(
+                nn.Linear(d_model, 64),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(64, 1),
+            )
+            self.label_smoothing = label_smoothing
+
+        def forward(self, x):
+            x = self.input_proj(x)
+            x = self.pos_enc(x)
+            x = self.encoder(x)
+            attn_scores = self.attn_w(x)
+            attn_weights = torch.softmax(attn_scores, dim=1)
+            pooled = (x * attn_weights).sum(dim=1)
+            return self.classifier(pooled).squeeze(-1)
+
+    return AnomalyTransformer()
+
+
+ARCH_BUILDERS = {
+    "lstm": build_lstm_model,
+    "transformer": build_transformer_model,
+}
+
+MODEL_PATHS = {
+    "lstm": Path("models/dl_lstm.pt"),
+    "transformer": Path("models/dl_transformer.pt"),
+}
+
+EVAL_PATHS = {
+    "lstm": Path("data/outputs/dl_eval.json"),
+    "transformer": Path("data/outputs/dl_eval_transformer.json"),
+}
 
 
 # ── Result dataclass ───────────────────────────────────────────────────────────
@@ -135,13 +207,16 @@ class LSTMAnomalyClassifier:
 
     def __init__(
         self,
-        model_path: str | Path = MODEL_PATH,
+        model_path: str | Path | None = None,
         device: str | None = None,
         threshold: float = DECISION_THRESHOLD,
+        arch: str = "lstm",
     ) -> None:
         import torch
-        self.model_path = Path(model_path)
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.arch = arch
+        self.model_path = Path(model_path) if model_path else MODEL_PATHS.get(arch, MODEL_PATH)
+        self.eval_output_path = EVAL_PATHS.get(arch, EVAL_OUTPUT_PATH)
+        self.device = device or ("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
         self.threshold = threshold
         self._model = None
         self._metadata: dict = {}
@@ -209,19 +284,48 @@ class LSTMAnomalyClassifier:
             yt = torch.tensor(y_arr, dtype=torch.float32)
             return TensorDataset(Xt, yt)
 
-        train_loader = DataLoader(_to_tensors(X_train, y_train),
-                                  batch_size=batch_size, shuffle=True)
+        from torch.utils.data import WeightedRandomSampler
+        train_ds = _to_tensors(X_train, y_train)
+        sample_weights = np.where(y_train == 1, len(y_train) / max(y_train.sum(), 1), 1.0)
+        sampler = WeightedRandomSampler(
+            weights=torch.tensor(sample_weights, dtype=torch.float64),
+            num_samples=len(y_train),
+            replacement=True,
+        )
+        train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler)
         val_loader = DataLoader(_to_tensors(X_val, y_val),
                                 batch_size=batch_size, shuffle=False)
 
-        model = build_lstm_model().to(self.device)
+        build_fn = ARCH_BUILDERS[self.arch]
+        model = build_fn().to(self.device)
         pos_weight = torch.tensor(
             [(len(y_train) - y_train.sum()) / max(y_train.sum(), 1)],
             dtype=torch.float32,
         ).to(self.device)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
+
+        def focal_loss(logits, targets, gamma=2.0):
+            bce_loss = bce(logits, targets)
+            probs = torch.sigmoid(logits)
+            pt = targets * probs + (1 - targets) * (1 - probs)
+            return (((1 - pt) ** gamma) * bce_loss).mean()
+
+        criterion = focal_loss
+        is_transformer = self.arch == "transformer"
+        effective_lr = learning_rate * 0.1 if is_transformer else learning_rate
+        effective_wd = 5e-3 if is_transformer else 1e-4
+        label_smooth = 0.1 if is_transformer else 0.0
+        optimizer = torch.optim.AdamW(model.parameters(), lr=effective_lr, weight_decay=effective_wd)
+        warmup_epochs = 5 if self.arch == "transformer" else 0
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
+        ) if warmup_epochs > 0 else None
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler] if warmup_scheduler else [cosine_scheduler],
+            milestones=[warmup_epochs] if warmup_scheduler else [],
+        )
 
         history = {k: [] for k in ["train_loss", "val_loss", "val_f1", "val_auc"]}
         best_val_f1 = -1.0
@@ -234,7 +338,8 @@ class LSTMAnomalyClassifier:
             train_losses = []
             for X_batch, y_batch in train_loader:
                 X_batch, y_batch = X_batch.to(self.device), y_batch.to(self.device)
-                # Augmentation: add small Gaussian noise
+                if label_smooth > 0:
+                    y_batch = y_batch * (1 - label_smooth) + 0.5 * label_smooth
                 X_batch = X_batch + torch.randn_like(X_batch) * 0.02
                 optimizer.zero_grad()
                 logits = model(X_batch)
@@ -283,9 +388,32 @@ class LSTMAnomalyClassifier:
 
         if best_state:
             model.load_state_dict(best_state)
+
+        # Find optimal threshold on validation set
+        model.eval()
+        all_probs, all_true = [], []
+        with torch.no_grad():
+            for X_batch, y_batch in val_loader:
+                X_batch = X_batch.to(self.device)
+                logits = model(X_batch)
+                all_probs.extend(torch.sigmoid(logits).cpu().numpy().tolist())
+                all_true.extend(y_batch.numpy().tolist())
+
+        best_thresh, best_thresh_f1 = self.threshold, best_val_f1
+        for t in np.arange(0.05, 0.95, 0.01):
+            preds = [int(p >= t) for p in all_probs]
+            f1 = f1_score(all_true, preds, zero_division=0)
+            if f1 > best_thresh_f1:
+                best_thresh_f1 = f1
+                best_thresh = float(t)
+
+        self.threshold = best_thresh
+        logger.info("Optimal threshold=%.2f → val F1=%.4f", best_thresh, best_thresh_f1)
+
         self._model = model
         self._metadata = {
-            "best_val_f1": best_val_f1,
+            "arch": self.arch,
+            "best_val_f1": best_thresh_f1,
             "epochs_trained": epoch + 1,
             "threshold": self.threshold,
             "feature_dim": FEATURE_DIM,
@@ -363,7 +491,7 @@ class LSTMAnomalyClassifier:
         self,
         video_path: str | Path,
         clip_id: str,
-        yolo_model_path: str = "models/yolov8m.pt",
+        yolo_model_path: str = "models/yolov8s.pt",
     ) -> DeepLearningResult:
         """
         End-to-end inference on a local video file (no pre-extracted features).
@@ -420,7 +548,11 @@ class LSTMAnomalyClassifier:
             raise FileNotFoundError(f"No model at {self.model_path}. Train first.")
         checkpoint = torch.load(str(self.model_path), map_location=self.device)
         self._metadata = checkpoint.get("metadata", {})
-        self._model = build_lstm_model().to(self.device)
+        if "threshold" in self._metadata:
+            self.threshold = self._metadata["threshold"]
+        arch = self._metadata.get("arch", self.arch)
+        build_fn = ARCH_BUILDERS[arch]
+        self._model = build_fn().to(self.device)
         self._model.load_state_dict(checkpoint["state_dict"])
         self._model.eval()
         logger.info("Loaded LSTM model from %s", self.model_path)
@@ -470,7 +602,7 @@ class LSTMAnomalyClassifier:
 
     def _save_eval(self, history: dict) -> None:
         """Save training history to JSON for analysis."""
-        EVAL_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self.eval_output_path.parent.mkdir(parents=True, exist_ok=True)
         output = {"history": history, "metadata": self._metadata}
-        EVAL_OUTPUT_PATH.write_text(json.dumps(output, indent=2))
-        logger.info("Saved DL eval to %s", EVAL_OUTPUT_PATH)
+        self.eval_output_path.write_text(json.dumps(output, indent=2))
+        logger.info("Saved DL eval to %s", self.eval_output_path)

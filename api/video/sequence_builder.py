@@ -39,9 +39,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SEQUENCE_LENGTH = 30    # frames per window (~1 sec at 30fps)
+SEQUENCE_LENGTH = 30    # frames per window (~1 sec at 30fps with skip=2)
 STEP_SIZE = 15          # 50% overlap
 FEATURE_DIM = 13
+FRAME_SKIP = 2          # process every Nth frame
 
 # COCO class ID sets
 _VEHICLE_IDS = {2, 3, 5, 7}          # car, motorcycle, bus, truck
@@ -50,7 +51,6 @@ _CYCLIST_IDS = {1}                    # bicycle
 _TRAFFIC_LIGHT_IDS = {9}
 _STOP_SIGN_IDS = {11}
 
-_FB_PARAMS = dict(pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
 
 
 class SequenceBuilder:
@@ -69,8 +69,8 @@ class SequenceBuilder:
 
     def __init__(
         self,
-        yolo_model_path: str = "models/yolov8m.pt",
-        device: str = "cpu",
+        yolo_model_path: str = "models/yolov8s.pt",
+        device: str = "mps",
         confidence: float = 0.25,
     ) -> None:
         self.yolo_model_path = yolo_model_path
@@ -117,9 +117,15 @@ class SequenceBuilder:
 
         frame_features: list[np.ndarray] = []
         prev_gray: np.ndarray | None = None
+        frame_idx = 0
 
         try:
             while True:
+                frame_idx += 1
+                if frame_idx % FRAME_SKIP != 0:
+                    if not cap.grab():
+                        break
+                    continue
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -137,15 +143,15 @@ class SequenceBuilder:
 
                 feat = self._detection_features(boxes, frame_area, w, h)
 
-                # ── Optical flow ──────────────────────────────────────────
+                # ── Motion estimation (frame differencing) ────────────────
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 if prev_gray is not None:
-                    flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, None, **_FB_PARAMS)
-                    fx, fy = flow[..., 0], flow[..., 1]
-                    mag = np.sqrt(fx**2 + fy**2)
-                    mean_mag = float(np.mean(mag))
-                    p90_mag = float(np.percentile(mag, 90))
-                    angle = float(np.mean(np.arctan2(fy, fx)))
+                    diff = cv2.absdiff(prev_gray, gray).astype(np.float32)
+                    mean_mag = float(np.mean(diff))
+                    p90_mag = float(np.percentile(diff, 90))
+                    _, thresh = cv2.threshold(diff.astype(np.uint8), 25, 255, cv2.THRESH_BINARY)
+                    motion_dir = float(np.mean(thresh[:gray.shape[0]//2]) - np.mean(thresh[gray.shape[0]//2:]))
+                    angle = np.arctan2(motion_dir, mean_mag + 1e-6)
                 else:
                     mean_mag = p90_mag = angle = 0.0
 

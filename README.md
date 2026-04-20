@@ -296,20 +296,36 @@ python scripts/model.py --predict --model classical
 Feature groups: optical flow magnitude stats, window-level peaks, motion direction variance, motion blur (Laplacian), edge density changes, temporal spike patterns. Results and feature importances saved to `data/outputs/classical_eval.json`.
 
 ### 3. Deep Learning (`scripts/models/deep_learning.py`)
-YOLOv8 per-frame object detection → 13-dim per-frame feature sequences → 2-layer bidirectional LSTM classifier. Outputs anomaly probability per 30-frame sliding window; clip is flagged if any window exceeds threshold.
+YOLOv8 per-frame object detection → 13-dim per-frame feature sequences → temporal deep learning classifier. Two architectures were trained and compared: **Bidirectional LSTM with attention** (best) and **Transformer encoder**. Outputs anomaly probability per 30-frame sliding window; clip is flagged if any window exceeds the optimized threshold.
 
 **Stage 1 — Feature Extraction** (`api/video/sequence_builder.py`):
-- Runs YOLOv8 (`yolov8m.pt`) on every frame to detect vehicles, pedestrians, cyclists, traffic lights, stop signs
+- Runs YOLOv8 (`yolov8s.pt`) on every frame to detect vehicles, pedestrians, cyclists, traffic lights, stop signs
 - Computes dense optical flow (Farneback) between consecutive frames
 - Per-frame 13-dim feature vector: object counts + proximity scores + flow magnitude/direction + motion blur + edge density
 - Sliding window: 30 frames (~1 sec at 30fps), 50% overlap → shape `(n_windows, 30, 13)`
 - Sequences cached as `data/processed/{clip_id}_dl_features.npz`
 
-**Stage 2 — LSTM Classifier** (`scripts/models/deep_learning.py`):
+**Stage 2a — LSTM Classifier** (best model):
 - Bidirectional LSTM (2 layers, hidden=128 → 256 bidirectional output)
-- Mean temporal pooling → FC head (256 → 64 → 1)
-- Training: BCEWithLogitsLoss with `pos_weight` for class imbalance, AdamW, CosineAnnealingLR, early stopping on val F1 (patience=10)
+- **Attention pooling** — learned attention weights over temporal steps (replaces mean pooling)
+- FC head (256 → 64 → 1)
+- Training: **Focal loss** with `pos_weight` for class imbalance, **weighted random oversampling** of anomaly windows, AdamW, CosineAnnealingLR, early stopping on val F1 (patience=10)
+- **Optimal threshold search** — finds the decision threshold that maximizes F1 on validation set
 - Data augmentation: Gaussian noise on features during training
+
+**Stage 2b — Transformer Classifier** (comparison model):
+- Input projection + LayerNorm → positional encoding → 2-layer Transformer encoder (pre-norm, GELU, 4 heads)
+- Attention pooling → FC head (128 → 64 → 1)
+- Training: same focal loss + oversampling pipeline, lower learning rate (1e-4) with 5-epoch linear warmup, higher weight decay (5e-3), label smoothing (0.1)
+
+**Model Comparison (626 labeled clips, 35,598 windows, 2.6% anomaly rate):**
+
+| Model | Val AUC-ROC | Val F1 (optimal threshold) |
+|-------|-------------|---------------------------|
+| **LSTM + Attention** | **0.88** | **0.35** |
+| Transformer | 0.78 | 0.18 |
+
+The LSTM outperforms the Transformer on this dataset due to its sequential inductive bias — with only 916 anomaly windows and 30-frame sequences, the Transformer lacks sufficient data to learn effective attention patterns from scratch.
 
 ```bash
 # Step 1: extract DL feature sequences for all labeled clips (downloads from R2)
@@ -318,8 +334,11 @@ python scripts/model.py --extract-dl-features --model deep_learning
 # Step 1b: extract from a single local video
 python scripts/model.py --extract-dl-features --model deep_learning --video path/to/clip.mp4
 
-# Step 2: train the LSTM (requires labeled clips + extracted features)
+# Step 2: train the LSTM (default, best model)
 python scripts/model.py --train --model deep_learning
+
+# Step 2b: train the Transformer (for comparison)
+python scripts/model.py --train --model deep_learning --arch transformer
 
 # Step 3: predict on all clips with pre-extracted features
 python scripts/model.py --predict --model deep_learning
@@ -331,9 +350,9 @@ python scripts/model.py --predict --model deep_learning --video path/to/clip.mp4
 Key parameters (tunable in `scripts/models/deep_learning.py`):
 - `HIDDEN_DIM = 128` — LSTM hidden units per direction
 - `SEQUENCE_LENGTH = 30` — frames per window
-- `DECISION_THRESHOLD = 0.5` — anomaly probability cutoff
-- Model weights saved to `models/dl_lstm.pt`
-- Training history (loss/F1/AUC per epoch) saved to `data/outputs/dl_eval.json`
+- Decision threshold optimized automatically during training (saved in model checkpoint)
+- LSTM weights saved to `models/dl_lstm.pt`, Transformer to `models/dl_transformer.pt`
+- Training history saved to `data/outputs/dl_eval.json` (LSTM) and `data/outputs/dl_eval_transformer.json`
 
 ### Experiment — Training Set Size Sensitivity Analysis (`scripts/experiment.py`)
 Answers: *"How many labeled clips do we need before each model becomes reliable?"*
@@ -453,14 +472,15 @@ Triggered via `POST /videos/{id}/process`:
 | `feature/naive-baseline` | ✅ | Optical flow thresholding anomaly detector |
 | `feature/classical-ml` | ✅ | 19-feature extraction pipeline + XGBoost + Random Forest classifier |
 | `feature/deep-learning` | ✅ | YOLOv8 object detection + LSTM temporal classifier |
+| `feature/ml-training` | ✅ | LSTM + Transformer training with focal loss, attention pooling, oversampling |
 | `feature/experiment` | ✅ | Training set size sensitivity analysis |
 | `feature/scoring-genai` | ✅ | Scoring engine + Claude API explanation generation |
 | `feature/api-backend` | ✅ | Full FastAPI routes, Celery tasks, video streaming |
-| `feature/frontend-core` | 🔜 | Next.js setup, layout, design system |
-| `feature/frontend-labeling` | 🔜 | Admin clip review UI (side-by-side player, thumbs up/down) |
-| `feature/frontend-dashboard` | 🔜 | Driver dashboard (score gauge, charts, trip history) |
-| `feature/frontend-anomalies` | 🔜 | Anomaly explorer + detail view with synced player |
-| `feature/deployment` | 🔜 | Docker, Railway config, Vercel config, CI/CD |
+| `feature/frontend-core` | ✅ Merged | Next.js setup, layout, design system |
+| `feature/frontend-labeling` | ✅ Merged | Admin clip review UI (side-by-side player, thumbs up/down) |
+| `feature/frontend-dashboard` | ✅ Merged | Driver dashboard (score gauge, charts, trip history) |
+| `feature/frontend-anomalies` | ✅ Merged | Anomaly explorer + detail view with synced player |
+| `feature/deployment` | ✅ Merged | Docker, Railway config, Vercel config, CI/CD |
 
 ---
 
