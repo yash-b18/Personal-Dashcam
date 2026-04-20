@@ -315,5 +315,5 @@ class ClassicalAnomalyClassifier:
         """Write evaluation metrics and feature importances to JSON."""
         EVAL_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         output = {"metrics": metrics, "feature_importances": importances}
-        EVAL_OUTPUT_PATH.write_text(json.dumps(output, indent=2))
+        EVAL_OUTPUT_PATH.write_text(json.dumps(output, indent=2, default=lambda o: float(o) if hasattr(o, 'item') else str(o)))
         logger.info("Saved evaluation results to %s", EVAL_OUTPUT_PATH)

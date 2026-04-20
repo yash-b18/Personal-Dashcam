@@ -55,6 +55,10 @@ def parse_args() -> argparse.Namespace:
         "--features-dir", type=str, default="data/processed",
         help="Directory for feature .npz files",
     )
+    parser.add_argument(
+        "--arch", choices=["lstm", "transformer"], default="lstm",
+        help="DL architecture: lstm or transformer (deep_learning only)",
+    )
     return parser.parse_args()
 
 
@@ -301,22 +305,22 @@ def run_dl_extract_features(video_path: str | None, features_dir: Path) -> None:
         db.close()
 
 
-def run_dl_train(features_dir: Path, output_dir: Path) -> None:
-    """Train the bidirectional LSTM on pre-extracted DL feature sequences."""
+def run_dl_train(features_dir: Path, output_dir: Path, arch: str = "lstm") -> None:
+    """Train a DL model (LSTM or Transformer) on pre-extracted feature sequences."""
     from scripts.models.deep_learning import LSTMAnomalyClassifier
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    clf = LSTMAnomalyClassifier()
-    logger.info("Training LSTM model on sequences in %s ...", features_dir)
+    clf = LSTMAnomalyClassifier(arch=arch)
+    logger.info("Training %s model on sequences in %s ...", arch.upper(), features_dir)
     history = clf.train(features_dir=features_dir)
     best_f1 = max(history["val_f1"]) if history["val_f1"] else 0.0
     best_auc = max(history["val_auc"]) if history["val_auc"] else 0.0
-    print("\n── Deep Learning LSTM Results ────────────")
+    print(f"\n── Deep Learning {arch.upper()} Results ────────────")
     print(f"  Best val F1:          {best_f1:.4f}")
     print(f"  Best val AUC-ROC:     {best_auc:.4f}")
     print(f"  Epochs trained:       {len(history['val_f1'])}")
-    print(f"  Model saved:          models/dl_lstm.pt")
-    print(f"  Eval saved:           data/outputs/dl_eval.json")
+    print(f"  Model saved:          {clf.model_path}")
+    print(f"  Eval saved:           {clf.eval_output_path}")
 
 
 def run_dl_predict(video_path: str | None, features_dir: Path, output_dir: Path) -> None:
@@ -392,12 +396,12 @@ def main() -> None:
         if args.extract_dl_features:
             run_dl_extract_features(args.video, Path(args.features_dir))
         elif args.train:
-            run_dl_train(Path(args.features_dir), output_dir)
+            run_dl_train(Path(args.features_dir), output_dir, arch=args.arch)
         elif args.predict:
             run_dl_predict(args.video, Path(args.features_dir), output_dir)
         elif args.evaluate:
             logger.info("DL evaluation runs automatically during --train (loss/F1/AUC history saved).")
-            run_dl_train(Path(args.features_dir), output_dir)
+            run_dl_train(Path(args.features_dir), output_dir, arch=args.arch)
 
     else:
         raise NotImplementedError(f"Unknown model: {args.model}")
