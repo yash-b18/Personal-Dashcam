@@ -14,14 +14,9 @@ build/
 .eggs/
 *.egg
 
-# ML / data
-models/*.pt
-models/*.pth
-models/*.pkl
-models/*.joblib
+# ML / data (model weights tracked via Git LFS)
 data/raw/*
 data/processed/*
-data/outputs/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/outputs/.gitkeep

@@ -1,0 +1,34 @@
+{
+  "metrics": {
+    "xgb_f1": 0.9523164805973183,
+    "xgb_auc": 0.9933351249664067,
+    "xgb_precision": 0.9118780346891864,
+    "xgb_recall": 0.9967213114754099,
+    "rf_f1": 0.9473450999789425,
+    "rf_auc": 0.9886186509002955,
+    "n_samples": 1220,
+    "n_positive": 610,
+    "n_folds": 5
+  },
+  "feature_importances": {
+    "flow_mean": 0.1845306158065796,
+    "flow_std": 0.018339304253458977,
+    "flow_max": 0.061204858124256134,
+    "flow_p75": 0.0382077731192112,
+    "flow_p90": 0.03506103530526161,
+    "flow_p95": 0.06240895763039589,
+    "window_max_mean": 0.01419600285589695,
+    "window_max_peak": 0.08296859264373779,
+    "window_max_std": 0.06564059853553772,
+    "window_n_flagged": 0.024078238755464554,
+    "direction_variance": 0.02516227215528488,
+    "direction_change_rate": 0.06342197209596634,
+    "blur_mean": 0.08302076905965805,
+    "blur_min": 0.062263380736112595,
+    "edge_density_std": 0.05217106267809868,
+    "edge_density_max_change": 0.07280084490776062,
+    "n_magnitude_spikes": 0.029950479045510292,
+    "spike_rate": 0.018306255340576172,
+    "max_consecutive_spikes": 0.006266932003200054
+  }
+}
