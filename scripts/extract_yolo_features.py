@@ -134,12 +134,22 @@ def _sample_frames_cv2(video_path: Path, target_fps: float) -> list[np.ndarray]:
         cap.release()
 
 
+_SAMPLER_LOGGED = False
+
+
 def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
     """Decode frames at `target_fps`. Prefer decord (seeks) over cv2 (reads all)."""
+    global _SAMPLER_LOGGED
     try:
         import decord  # noqa: F401
+        if not _SAMPLER_LOGGED:
+            logger.info("  frame sampler: decord %s", decord.__version__)
+            _SAMPLER_LOGGED = True
         return _sample_frames_decord(video_path, target_fps)
     except ImportError:
+        if not _SAMPLER_LOGGED:
+            logger.warning("  frame sampler: cv2 fallback — install `decord` for ~10x faster decode")
+            _SAMPLER_LOGGED = True
         return _sample_frames_cv2(video_path, target_fps)
 
 
