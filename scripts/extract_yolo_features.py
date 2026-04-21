@@ -100,6 +100,53 @@ _DECORD_CTX_LOGGED = False
 _DECORD_OUT_W = 640
 _DECORD_OUT_H = 384
 
+_NVDEC_CHECKED = False
+_NVDEC_AVAILABLE = False
+
+
+def _check_ffmpeg_nvdec() -> bool:
+    """Probe once whether ffmpeg on this box has CUDA/NVDEC support."""
+    global _NVDEC_CHECKED, _NVDEC_AVAILABLE
+    if _NVDEC_CHECKED:
+        return _NVDEC_AVAILABLE
+    _NVDEC_CHECKED = True
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["ffmpeg", "-hide_banner", "-hwaccels"],
+            stderr=subprocess.DEVNULL, text=True, timeout=5,
+        )
+        _NVDEC_AVAILABLE = "cuda" in out.lower()
+    except Exception:
+        _NVDEC_AVAILABLE = False
+    return _NVDEC_AVAILABLE
+
+
+def _sample_frames_nvdec(video_path: Path, target_fps: float,
+                         out_w: int = _DECORD_OUT_W,
+                         out_h: int = _DECORD_OUT_H) -> list[np.ndarray]:
+    """ffmpeg subprocess with hardware decode (NVDEC) and GPU-side scaling.
+    Emits raw BGR bytes which we reshape into frame ndarrays."""
+    import subprocess
+    cmd = [
+        "ffmpeg", "-nostdin", "-loglevel", "error",
+        "-hwaccel", "cuda",
+        "-hwaccel_output_format", "cuda",
+        "-c:v", "h264_cuvid",
+        "-i", str(video_path),
+        "-vf", f"fps={target_fps},scale_cuda={out_w}:{out_h},hwdownload,format=bgr24",
+        "-pix_fmt", "bgr24",
+        "-f", "rawvideo", "-",
+    ]
+    raw = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+    frame_size = out_w * out_h * 3
+    n = len(raw) // frame_size
+    if n == 0:
+        return []
+    arr = np.frombuffer(raw, dtype=np.uint8).reshape(n, out_h, out_w, 3)
+    # Copy so downstream ops don't hold the 1-shot bytes buffer.
+    return [arr[i].copy() for i in range(n)]
+
 
 def _open_decord(video_path: Path):
     """Open a decord VideoReader, preferring GPU (NVDEC) and forcing a
@@ -165,8 +212,21 @@ _SAMPLER_LOGGED = False
 
 
 def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
-    """Decode frames at `target_fps`. Prefer decord (seeks) over cv2 (reads all)."""
+    """Decode frames at `target_fps`. Priority:
+    1. ffmpeg with NVDEC (h264_cuvid + scale_cuda) — hardware decode
+    2. decord (with downscale) — software but seeks properly
+    3. cv2 — last-ditch sequential decode
+    """
     global _SAMPLER_LOGGED
+    if _check_ffmpeg_nvdec():
+        if not _SAMPLER_LOGGED:
+            logger.info("  frame sampler: ffmpeg NVDEC (h264_cuvid)")
+            _SAMPLER_LOGGED = True
+        try:
+            return _sample_frames_nvdec(video_path, target_fps)
+        except Exception as exc:
+            logger.warning("NVDEC decode failed on %s (%s); falling back to decord/cv2",
+                           video_path.name, exc)
     try:
         import decord  # noqa: F401
         if not _SAMPLER_LOGGED:
@@ -175,7 +235,7 @@ def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
         return _sample_frames_decord(video_path, target_fps)
     except ImportError:
         if not _SAMPLER_LOGGED:
-            logger.warning("  frame sampler: cv2 fallback — install `decord` for ~10x faster decode")
+            logger.warning("  frame sampler: cv2 fallback — install `decord` for faster decode")
             _SAMPLER_LOGGED = True
         return _sample_frames_cv2(video_path, target_fps)
 
