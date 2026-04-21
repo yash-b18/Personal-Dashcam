@@ -167,6 +167,7 @@ class TestSchemas:
             grade="B",
             clips_analyzed=15,
             recent_anomaly_count=3,
+            clips_with_anomalies=2,
             anomaly_breakdown=[],
             score_trend=[],
         )
