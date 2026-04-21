@@ -156,19 +156,22 @@ def extract_yolo_features(
     conf: float = CONF_THRESHOLD,
     imgsz: int = DEFAULT_IMGSZ,
     device: str | None = None,
+    timings: dict | None = None,
 ) -> np.ndarray:
     """Run YOLOv8 on one clip and return a 20-dim feature vector."""
     video_path = Path(video_path)
+    t0 = time.perf_counter()
     frames = _sample_frames(video_path, target_fps)
+    decode_s = time.perf_counter() - t0
     if not frames:
+        if timings is not None:
+            timings.update(decode_s=decode_s, predict_s=0.0, n_frames=0)
         return _zero_vector()
 
     frame_area = float(frames[0].shape[0] * frames[0].shape[1])
 
     use_half = bool(device and device.startswith("cuda"))
-    # Single predict call per clip so ultralytics reuses one predictor
-    # (it rebuilds on every predict() call otherwise — ~30s/clip of overhead
-    # on L4, masquerading as slow inference).
+    t1 = time.perf_counter()
     results = model.predict(
         frames,
         imgsz=imgsz,
@@ -177,6 +180,9 @@ def extract_yolo_features(
         half=use_half,
         verbose=False,
     )
+    predict_s = time.perf_counter() - t1
+    if timings is not None:
+        timings.update(decode_s=decode_s, predict_s=predict_s, n_frames=len(frames))
 
     per_frame: list = []
     for r in results:
@@ -442,13 +448,22 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
             try:
                 clip_id, tmp_path, dl_s = fut.result()
                 t1 = time.perf_counter()
-                vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz, device=args.device)
+                timings: dict = {}
+                vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz,
+                                            device=args.device, timings=timings)
                 infer_s = time.perf_counter() - t1
                 save_yolo_features(clip_id, vec, out_dir=args.output_dir)
                 extracted += 1
                 if extracted <= n_debug:
-                    logger.info("  [timing %d] download=%.2fs infer=%.2fs",
-                                extracted, dl_s, infer_s)
+                    logger.info(
+                        "  [timing %d] dl=%.2fs decode=%.2fs predict=%.2fs "
+                        "(%d frames) total_infer=%.2fs",
+                        extracted, dl_s,
+                        timings.get("decode_s", 0.0),
+                        timings.get("predict_s", 0.0),
+                        timings.get("n_frames", 0),
+                        infer_s,
+                    )
             except Exception as exc:
                 logger.error("Failed on %s (%s): %s", clip_id, entry["r2_key_front"], exc)
                 failed += 1
