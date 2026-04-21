@@ -12,7 +12,8 @@ import { api, AnomalySummary, AnomalyDetail } from "@/lib/api";
 import { AnomalyTypeBadge } from "@/components/ui/AnomalyTypeBadge";
 import { SeverityBar } from "@/components/ui/SeverityBar";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { formatDate, formatDuration, anomalyLabel, scoreToColor } from "@/lib/utils";
+import { VideoThumbnail } from "@/components/ui/VideoThumbnail";
+import { formatDuration, anomalyLabel, scoreToColor } from "@/lib/utils";
 
 const ANOMALY_TYPES = [
   "hard_braking", "near_miss", "lane_departure", "traffic_violation",
@@ -185,7 +186,7 @@ function SyncedVideoPlayer({
 function AnomalyModal({ id, onClose }: { id: string; onClose: () => void }) {
   const [detail, setDetail] = useState<AnomalyDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"video" | "ai" | "metadata">("video");
+  const [activeTab, setActiveTab] = useState<"video" | "ai">("video");
 
   useEffect(() => {
     api.anomalies.get(id).then(setDetail).catch(() => {}).finally(() => setLoading(false));
@@ -202,7 +203,6 @@ function AnomalyModal({ id, onClose }: { id: string; onClose: () => void }) {
   const tabs = [
     { id: "video",    label: "Video",      icon: Camera },
     { id: "ai",       label: "AI Analysis",icon: Brain  },
-    { id: "metadata", label: "Metadata",   icon: Info   },
   ] as const;
 
   return (
@@ -452,63 +452,6 @@ function AnomalyModal({ id, onClose }: { id: string; onClose: () => void }) {
                 </div>
               )}
 
-              {/* Metadata Tab */}
-              {activeTab === "metadata" && (
-                <div className="space-y-3">
-                  <div
-                    className="rounded-xl p-4"
-                    style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
-                  >
-                    <p className="section-label mb-3">Detection Metadata</p>
-                    {detail.detection_metadata && Object.keys(detail.detection_metadata).length > 0 ? (
-                      <div className="space-y-2">
-                        {Object.entries(detail.detection_metadata).map(([key, value]) => (
-                          <div
-                            key={key}
-                            className="flex items-center justify-between py-2 px-3 rounded-lg"
-                            style={{ background: "var(--color-panel)", border: "1px solid var(--color-border)" }}
-                          >
-                            <span className="font-mono text-[11px]" style={{ color: "var(--color-ink-tertiary)" }}>
-                              {key.replace(/_/g, " ")}
-                            </span>
-                            <span className="font-mono text-[11px] font-medium" style={{ color: "var(--color-ink-primary)" }}>
-                              {typeof value === "number" ? value.toFixed(3) : String(value)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-[12px]" style={{ color: "var(--color-ink-secondary)" }}>No detection metadata available.</p>
-                    )}
-                  </div>
-
-                  <div
-                    className="rounded-xl p-4"
-                    style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
-                  >
-                    <p className="section-label mb-3">Anomaly Record</p>
-                    <div className="space-y-2 font-mono text-[11px]">
-                      {[
-                        { k: "Anomaly ID",    v: String(detail.id) },
-                        { k: "Clip ID",       v: String(detail.clip_id) },
-                        { k: "Model",         v: detail.model_type },
-                        { k: "Type",          v: anomalyLabel(detail.anomaly_type) },
-                        { k: "Timestamp",     v: `${detail.timestamp_start.toFixed(2)}s → ${detail.timestamp_end.toFixed(2)}s` },
-                        { k: "Detected at",   v: formatDate(detail.detected_at) },
-                      ].map(({ k, v }) => (
-                        <div
-                          key={k}
-                          className="flex items-start justify-between gap-4 py-1.5 px-3 rounded-lg"
-                          style={{ background: "var(--color-panel)", border: "1px solid var(--color-border)" }}
-                        >
-                          <span style={{ color: "var(--color-ink-tertiary)", flexShrink: 0 }}>{k}</span>
-                          <span style={{ color: "var(--color-ink-secondary)", wordBreak: "break-all", textAlign: "right" }}>{v}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
             </>
           ) : (
             <div className="py-12 text-center" style={{ color: "var(--color-ink-secondary)" }}>
@@ -533,36 +476,52 @@ function AnomalyCard({ anomaly, onClick, index }: { anomaly: AnomalySummary; onC
       onClick={onClick}
       className="panel card-hover cursor-pointer overflow-hidden"
     >
-      {/* Thumbnail placeholder */}
+      {/* Thumbnail — seeked near event time when front_url is available */}
       <div
         className="relative h-32 flex items-center justify-center overflow-hidden"
         style={{ background: "var(--color-surface)" }}
       >
-        <div className="absolute inset-0 opacity-20"
-          style={{ backgroundImage: "linear-gradient(rgba(34,211,238,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.05) 1px, transparent 1px)", backgroundSize: "20px 20px" }}
-        />
-        <div className="relative z-10 flex flex-col items-center gap-1.5">
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{ background: "rgba(17,31,52,0.8)", border: "1px solid var(--color-border)" }}
-          >
-            <Camera size={16} style={{ color: "var(--color-ink-tertiary)" }} />
-          </div>
-          <span className="font-mono text-[9px]" style={{ color: "var(--color-ink-tertiary)" }}>
-            {formatDuration(anomaly.timestamp_end - anomaly.timestamp_start)} clip
-          </span>
-        </div>
+        {anomaly.front_url ? (
+          <VideoThumbnail
+            src={anomaly.front_url}
+            seekTo={Math.max(0, anomaly.timestamp_start - 0.5)}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          <>
+            <div className="absolute inset-0 opacity-20"
+              style={{ backgroundImage: "linear-gradient(rgba(34,211,238,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.05) 1px, transparent 1px)", backgroundSize: "20px 20px" }}
+            />
+            <div className="relative z-10 flex flex-col items-center gap-1.5">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: "rgba(17,31,52,0.8)", border: "1px solid var(--color-border)" }}
+              >
+                <Camera size={16} style={{ color: "var(--color-ink-tertiary)" }} />
+              </div>
+              <span className="font-mono text-[9px]" style={{ color: "var(--color-ink-tertiary)" }}>
+                {formatDuration(anomaly.timestamp_end - anomaly.timestamp_start)} clip
+              </span>
+            </div>
+          </>
+        )}
+        {/* Gradient scrim to keep overlay chips legible against real footage */}
+        {anomaly.front_url && (
+          <div className="absolute inset-0 pointer-events-none"
+            style={{ background: "linear-gradient(180deg, rgba(7,16,30,0.55) 0%, transparent 30%, transparent 70%, rgba(7,16,30,0.55) 100%)" }}
+          />
+        )}
         {/* Score impact pill */}
         <div
           className="absolute top-2 right-2 font-mono text-[9px] px-1.5 py-0.5 rounded"
-          style={{ background: `${impactColor}18`, border: `1px solid ${impactColor}30`, color: impactColor }}
+          style={{ background: `${impactColor}18`, border: `1px solid ${impactColor}30`, color: impactColor, backdropFilter: "blur(4px)" }}
         >
           −{anomaly.score_impact.toFixed(1)} pts
         </div>
         {/* Timestamp */}
         <div
           className="absolute bottom-2 left-2 font-mono text-[9px] px-1.5 py-0.5 rounded"
-          style={{ background: "rgba(7,16,30,0.7)", color: "var(--color-ink-tertiary)" }}
+          style={{ background: "rgba(7,16,30,0.7)", color: "var(--color-ink-tertiary)", backdropFilter: "blur(4px)" }}
         >
           T+{anomaly.timestamp_start.toFixed(1)}s
         </div>
@@ -570,7 +529,7 @@ function AnomalyCard({ anomaly, onClick, index }: { anomaly: AnomalySummary; onC
         {anomaly.ai_explanation && (
           <div
             className="absolute top-2 left-2 w-5 h-5 rounded flex items-center justify-center"
-            style={{ background: "rgba(34,211,238,0.15)", border: "1px solid rgba(34,211,238,0.3)" }}
+            style={{ background: "rgba(34,211,238,0.15)", border: "1px solid rgba(34,211,238,0.3)", backdropFilter: "blur(4px)" }}
             title="AI explanation available"
           >
             <Brain size={9} style={{ color: "var(--color-accent)" }} />

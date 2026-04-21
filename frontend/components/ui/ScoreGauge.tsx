@@ -36,13 +36,16 @@ export function ScoreGauge({ score, grade, size = 220, animated = true }: ScoreG
       const t = Math.min(elapsed / DURATION, 1);
       const eased = 1 - Math.pow(1 - t, 3);
       const current = eased * score;
-      setDisplayScore(Math.round(current));
+      setDisplayScore(current);
       setProgress(current);
       if (t < 1) rafRef.current = requestAnimationFrame(animate);
     };
     rafRef.current = requestAnimationFrame(animate);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [score, animated]);
+
+  // Show one decimal so a near-perfect score like 99.69 doesn't misleadingly round up to 100.
+  const displayText = displayScore >= 100 ? "100" : displayScore.toFixed(1);
 
   return (
     <div className="relative flex flex-col items-center">
@@ -112,18 +115,18 @@ export function ScoreGauge({ score, grade, size = 220, animated = true }: ScoreG
           fill="none" stroke="rgba(28,45,68,0.4)" strokeWidth="1"
         />
 
-        {/* Score number */}
+        {/* Score number — slightly smaller when a decimal is showing so it fits */}
         <text
           x={cx} y={cx - 6}
           textAnchor="middle" dominantBaseline="middle"
           fill={color}
           fontFamily="'Plus Jakarta Sans', sans-serif"
-          fontSize={size * 0.25}
+          fontSize={size * (displayText.length > 3 ? 0.2 : 0.25)}
           fontWeight={800}
           letterSpacing="-2"
           style={{ filter: `drop-shadow(0 0 16px ${color}60)` }}
         >
-          {displayScore}
+          {displayText}
         </text>
 
         {/* Grade */}
@@ -139,6 +142,35 @@ export function ScoreGauge({ score, grade, size = 220, animated = true }: ScoreG
         >
           GRADE  {grade}
         </text>
+
+        {/* Grade threshold labels — A/B/C/D positioned outside the tick marks at their minimum-score angle */}
+        {[
+          { pos: 60, label: "D", color: "#F97316" },
+          { pos: 70, label: "C", color: "#F59E0B" },
+          { pos: 80, label: "B", color: "#3B82F6" },
+          { pos: 90, label: "A", color: "#10B981" },
+        ].map(({ pos, label, color }) => {
+          const angle = 150 + (pos / 100) * ARC_DEGREES;
+          const rad = (angle * Math.PI) / 180;
+          const r = RADIUS + STROKE / 2 + 20;
+          return (
+            <text
+              key={label}
+              x={cx + r * Math.cos(rad)}
+              y={cx + r * Math.sin(rad)}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill={color}
+              fontFamily="'IBM Plex Mono', monospace"
+              fontSize="10"
+              fontWeight={700}
+              opacity="0.85"
+              style={{ letterSpacing: "0.05em" }}
+            >
+              {label}
+            </text>
+          );
+        })}
 
         {/* Min/Max */}
         <text x={cx - RADIUS - STROKE - 6} y={cx + RADIUS * 0.65}

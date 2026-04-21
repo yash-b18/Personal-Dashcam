@@ -11,9 +11,10 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ClipReviewModal } from "@/components/ui/ClipReviewModal";
 import { UploadModal } from "@/components/ui/UploadModal";
+import { VideoThumbnail } from "@/components/ui/VideoThumbnail";
 import { formatDate, formatDuration, scoreToColor, cn } from "@/lib/utils";
 
-const PAGE_SIZE = 30;
+const PAGE_SIZE_OPTIONS = [10, 20, 30] as const;
 const STATUS_OPTIONS = ["", "done", "pending", "processing", "error"];
 
 // Column widths — keeps header + body cells perfectly aligned.
@@ -114,7 +115,11 @@ function ClipRow({
           style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
         >
           {clip.front_url
-            ? <video src={clip.front_url} className="w-full h-full object-cover" muted preload="none" />
+            ? <VideoThumbnail
+                src={clip.front_url}
+                seekTo={Math.min(0.5, (clip.duration_seconds ?? 1) * 0.1)}
+                className="w-full h-full object-cover"
+              />
             : <Film size={10} style={{ color: "var(--color-ink-tertiary)" }} />}
           <div
             className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
@@ -202,6 +207,7 @@ export default function TripsPage() {
   const [clips, setClips] = useState<ClipSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(30);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
@@ -214,14 +220,14 @@ export default function TripsPage() {
 
   const fetchClips = useCallback((opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
-    api.clips.list({ page, page_size: PAGE_SIZE, status: statusFilter || undefined })
+    api.clips.list({ page, page_size: pageSize, status: statusFilter || undefined })
       .then(d => { setClips(d.clips); setTotal(d.total); })
       .catch(() => {})
       .finally(() => { if (!opts?.silent) setLoading(false); });
-  }, [page, statusFilter]);
+  }, [page, pageSize, statusFilter]);
 
   useEffect(() => { fetchClips(); }, [fetchClips]);
-  useEffect(() => { setPage(1); }, [statusFilter]);
+  useEffect(() => { setPage(1); }, [statusFilter, pageSize]);
 
   // Poll while any clip on this page is processing so status badges update live.
   // Use `silent` so the table doesn't flash its loading skeleton every tick.
@@ -268,7 +274,7 @@ export default function TripsPage() {
     }
   };
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   // Client-side filename search over the current page
   const visibleClips = useMemo(() => {
@@ -460,6 +466,32 @@ export default function TripsPage() {
         </div>
 
         <div className="flex-1" />
+
+        {/* Per-page selector */}
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-[9px] uppercase tracking-[0.2em]" style={{ color: "var(--color-ink-tertiary)" }}>
+            Per page
+          </span>
+          <div className="flex items-center gap-1">
+            {PAGE_SIZE_OPTIONS.map(n => {
+              const active = pageSize === n;
+              return (
+                <button
+                  key={n}
+                  onClick={() => setPageSize(n)}
+                  className="font-mono text-[11px] px-2 py-1 rounded transition-colors"
+                  style={
+                    active
+                      ? { background: "rgba(34,211,238,0.12)", border: "1px solid rgba(34,211,238,0.35)", color: "var(--color-accent)" }
+                      : { background: "rgba(12,25,40,0.6)", border: "1px solid var(--color-border)", color: "var(--color-ink-secondary)" }
+                  }
+                >
+                  {n}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Search */}
         <div

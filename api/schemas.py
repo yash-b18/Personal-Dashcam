@@ -57,6 +57,7 @@ class AnomalySummary(BaseModel):
     score_impact: float
     ai_explanation: str | None = None
     detected_at: datetime
+    front_url: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -64,7 +65,6 @@ class AnomalySummary(BaseModel):
 class AnomalyDetail(AnomalySummary):
     detection_metadata: dict[str, Any] | None = None
     clip_filename: str | None = None
-    front_url: str | None = None
     rear_url: str | None = None
 
 
@@ -149,6 +149,7 @@ class DashboardResponse(BaseModel):
     grade: str
     clips_analyzed: int
     recent_anomaly_count: int
+    clips_with_anomalies: int   # distinct clips with ≥1 detected anomaly
     anomaly_breakdown: list[AnomalyBreakdown]
     score_trend: list[ClipScoreHistory]   # last N clips for chart
 
