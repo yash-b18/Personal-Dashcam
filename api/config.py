@@ -39,9 +39,15 @@ class Settings(BaseSettings):
     r2_bucket_name: str = Field(..., description="R2 bucket name")
     r2_public_url: str = Field(..., description="Public R2 bucket URL")
     # Folder layout: bucket/{r2_main_folder}/{r2_front_folder}/ and /{r2_rear_folder}/
-    r2_main_folder: str = Field(..., description="Top-level folder containing front and rear subfolders")
-    r2_front_folder: str = Field(default="front", description="Subfolder name for front camera videos")
-    r2_rear_folder: str = Field(default="rear", description="Subfolder name for rear camera videos")
+    r2_main_folder: str = Field(
+        ..., description="Top-level folder containing front and rear subfolders"
+    )
+    r2_front_folder: str = Field(
+        default="front", description="Subfolder name for front camera videos"
+    )
+    r2_rear_folder: str = Field(
+        default="rear", description="Subfolder name for rear camera videos"
+    )
 
     @property
     def r2_endpoint_url(self) -> str:

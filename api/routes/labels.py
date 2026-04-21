@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from api.database import get_db
-from api.models.db_models import Clip, Label, ProcessingStatus
+from api.models.db_models import Clip, Label
 from api.schemas import LabelQueueItem, LabelQueueResponse, LabelResponse, LabelSubmit
 from api.storage.r2_client import R2Client
 

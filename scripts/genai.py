@@ -51,10 +51,11 @@ def _severity_label(severity: float) -> str:
 @dataclass
 class ExplanationResult:
     """Claude-generated explanation for a single anomaly event."""
+
     anomaly_id: str
-    explanation: str          # What happened and why it matters
-    recommendation: str       # Specific advice for the driver
-    score_impact_text: str    # Plain-language score impact statement
+    explanation: str  # What happened and why it matters
+    recommendation: str  # Specific advice for the driver
+    score_impact_text: str  # Plain-language score impact statement
 
 
 class AnomalyExplainer:
@@ -81,6 +82,7 @@ class AnomalyExplainer:
         if self._client is None:
             try:
                 import anthropic
+
                 self._client = anthropic.Anthropic(api_key=self._api_key)
             except ImportError as exc:
                 raise RuntimeError(
@@ -160,10 +162,12 @@ class AnomalyExplainer:
             results.append(result)
             logger.info(
                 "Explained anomaly %d/%d: %s",
-                i + 1, len(anomalies), anomaly.get("anomaly_id", "?"),
+                i + 1,
+                len(anomalies),
+                anomaly.get("anomaly_id", "?"),
             )
             if i < len(anomalies) - 1:
-                time.sleep(0.5)   # Avoid rate limit bursts
+                time.sleep(0.5)  # Avoid rate limit bursts
         return results
 
     def _build_prompt(
@@ -182,7 +186,9 @@ class AnomalyExplainer:
         sev_label = _severity_label(severity)
         duration = round(timestamp_end - timestamp_start, 1)
         objects_str = (
-            ", ".join(detected_objects) if detected_objects else "no specific objects noted"
+            ", ".join(detected_objects)
+            if detected_objects
+            else "no specific objects noted"
         )
         score_pts = round(score_impact, 1)
 

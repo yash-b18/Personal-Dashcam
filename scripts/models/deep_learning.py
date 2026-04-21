@@ -28,7 +28,6 @@ Model weights saved to models/dl_lstm.pt.
 
 import json
 import logging
-import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -48,6 +47,7 @@ EVAL_OUTPUT_PATH = Path("data/outputs/dl_eval.json")
 
 
 # ── PyTorch model ──────────────────────────────────────────────────────────────
+
 
 def build_lstm_model(
     input_dim: int = FEATURE_DIM,
@@ -71,7 +71,6 @@ def build_lstm_model(
     import torch.nn as nn
 
     class AnomalyLSTM(nn.Module):
-
         def __init__(self) -> None:
             super().__init__()
             self.lstm = nn.LSTM(
@@ -92,8 +91,8 @@ def build_lstm_model(
             )
 
         def forward(self, x):
-            lstm_out, _ = self.lstm(x)              # (batch, seq_len, 2*hidden_dim)
-            attn_scores = self.attn_w(lstm_out)     # (batch, seq_len, 1)
+            lstm_out, _ = self.lstm(x)  # (batch, seq_len, 2*hidden_dim)
+            attn_scores = self.attn_w(lstm_out)  # (batch, seq_len, 1)
             attn_weights = torch.softmax(attn_scores, dim=1)
             pooled = (lstm_out * attn_weights).sum(dim=1)  # (batch, 2*hidden_dim)
             return self.classifier(pooled).squeeze(-1)
@@ -114,18 +113,22 @@ def build_transformer_model(
     import torch.nn as nn
 
     class PositionalEncoding(nn.Module):
-        def __init__(self, d_model: int, max_len: int = 100, dropout: float = 0.1) -> None:
+        def __init__(
+            self, d_model: int, max_len: int = 100, dropout: float = 0.1
+        ) -> None:
             super().__init__()
             self.dropout = nn.Dropout(dropout)
             pe = torch.zeros(max_len, d_model)
             position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-            div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+            div_term = torch.exp(
+                torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+            )
             pe[:, 0::2] = torch.sin(position * div_term)
             pe[:, 1::2] = torch.cos(position * div_term)
             self.register_buffer("pe", pe.unsqueeze(0))
 
         def forward(self, x):
-            return self.dropout(x + self.pe[:, :x.size(1)])
+            return self.dropout(x + self.pe[:, : x.size(1)])
 
     class AnomalyTransformer(nn.Module):
         def __init__(self) -> None:
@@ -134,14 +137,21 @@ def build_transformer_model(
                 nn.Linear(input_dim, d_model),
                 nn.LayerNorm(d_model),
             )
-            self.pos_enc = PositionalEncoding(d_model, max_len=SEQUENCE_LENGTH + 10, dropout=dropout)
+            self.pos_enc = PositionalEncoding(
+                d_model, max_len=SEQUENCE_LENGTH + 10, dropout=dropout
+            )
             encoder_layer = nn.TransformerEncoderLayer(
-                d_model=d_model, nhead=nhead, dim_feedforward=d_model * 2,
-                dropout=dropout, batch_first=True, activation="gelu",
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=d_model * 2,
+                dropout=dropout,
+                batch_first=True,
+                activation="gelu",
                 norm_first=True,
             )
             self.encoder = nn.TransformerEncoder(
-                encoder_layer, num_layers=num_layers,
+                encoder_layer,
+                num_layers=num_layers,
                 norm=nn.LayerNorm(d_model),
             )
             self.attn_w = nn.Linear(d_model, 1, bias=False)
@@ -183,19 +193,22 @@ EVAL_PATHS = {
 
 # ── Result dataclass ───────────────────────────────────────────────────────────
 
+
 @dataclass
 class DeepLearningResult:
     """Inference result from the LSTM classifier for a single clip."""
+
     clip_id: str
     is_anomaly: bool
-    anomaly_probability: float      # max window probability
-    severity: float                 # same as anomaly_probability
+    anomaly_probability: float  # max window probability
+    severity: float  # same as anomaly_probability
     anomaly_windows: list[dict] = field(default_factory=list)
     # Each: {"window_idx": int, "probability": float, "start_frame": int, "end_frame": int}
     error: str | None = None
 
 
 # ── Classifier wrapper ─────────────────────────────────────────────────────────
+
 
 class LSTMAnomalyClassifier:
     """
@@ -213,10 +226,19 @@ class LSTMAnomalyClassifier:
         arch: str = "lstm",
     ) -> None:
         import torch
+
         self.arch = arch
-        self.model_path = Path(model_path) if model_path else MODEL_PATHS.get(arch, MODEL_PATH)
+        self.model_path = (
+            Path(model_path) if model_path else MODEL_PATHS.get(arch, MODEL_PATH)
+        )
         self.eval_output_path = EVAL_PATHS.get(arch, EVAL_OUTPUT_PATH)
-        self.device = device or ("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or (
+            "mps"
+            if torch.backends.mps.is_available()
+            else "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
         self.threshold = threshold
         self._model = None
         self._metadata: dict = {}
@@ -272,7 +294,9 @@ class LSTMAnomalyClassifier:
 
         logger.info(
             "Training dataset: %d windows (%d anomaly, %d normal)",
-            len(y), int(np.sum(y)), int(len(y) - np.sum(y)),
+            len(y),
+            int(np.sum(y)),
+            int(len(y) - np.sum(y)),
         )
 
         X_train, X_val, y_train, y_val = train_test_split(
@@ -285,16 +309,20 @@ class LSTMAnomalyClassifier:
             return TensorDataset(Xt, yt)
 
         from torch.utils.data import WeightedRandomSampler
+
         train_ds = _to_tensors(X_train, y_train)
-        sample_weights = np.where(y_train == 1, len(y_train) / max(y_train.sum(), 1), 1.0)
+        sample_weights = np.where(
+            y_train == 1, len(y_train) / max(y_train.sum(), 1), 1.0
+        )
         sampler = WeightedRandomSampler(
             weights=torch.tensor(sample_weights, dtype=torch.float64),
             num_samples=len(y_train),
             replacement=True,
         )
         train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler)
-        val_loader = DataLoader(_to_tensors(X_val, y_val),
-                                batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(
+            _to_tensors(X_val, y_val), batch_size=batch_size, shuffle=False
+        )
 
         build_fn = ARCH_BUILDERS[self.arch]
         model = build_fn().to(self.device)
@@ -315,15 +343,25 @@ class LSTMAnomalyClassifier:
         effective_lr = learning_rate * 0.1 if is_transformer else learning_rate
         effective_wd = 5e-3 if is_transformer else 1e-4
         label_smooth = 0.1 if is_transformer else 0.0
-        optimizer = torch.optim.AdamW(model.parameters(), lr=effective_lr, weight_decay=effective_wd)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=effective_lr, weight_decay=effective_wd
+        )
         warmup_epochs = 5 if self.arch == "transformer" else 0
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-            optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
-        ) if warmup_epochs > 0 else None
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=epochs
+        )
+        warmup_scheduler = (
+            torch.optim.lr_scheduler.LinearLR(
+                optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
+            )
+            if warmup_epochs > 0
+            else None
+        )
         scheduler = torch.optim.lr_scheduler.SequentialLR(
             optimizer,
-            schedulers=[warmup_scheduler, cosine_scheduler] if warmup_scheduler else [cosine_scheduler],
+            schedulers=[warmup_scheduler, cosine_scheduler]
+            if warmup_scheduler
+            else [cosine_scheduler],
             milestones=[warmup_epochs] if warmup_scheduler else [],
         )
 
@@ -363,7 +401,9 @@ class LSTMAnomalyClassifier:
 
             val_preds = [int(p >= self.threshold) for p in val_probs]
             val_f1 = f1_score(val_true, val_preds, zero_division=0)
-            val_auc = roc_auc_score(val_true, val_probs) if len(set(val_true)) > 1 else 0.5
+            val_auc = (
+                roc_auc_score(val_true, val_probs) if len(set(val_true)) > 1 else 0.5
+            )
 
             history["train_loss"].append(float(np.mean(train_losses)))
             history["val_loss"].append(float(np.mean(val_losses)))
@@ -372,8 +412,12 @@ class LSTMAnomalyClassifier:
 
             logger.info(
                 "Epoch %d/%d | train_loss=%.4f val_loss=%.4f val_f1=%.4f val_auc=%.4f",
-                epoch + 1, epochs,
-                history["train_loss"][-1], history["val_loss"][-1], val_f1, val_auc,
+                epoch + 1,
+                epochs,
+                history["train_loss"][-1],
+                history["val_loss"][-1],
+                val_f1,
+                val_auc,
             )
 
             if val_f1 > best_val_f1:
@@ -383,7 +427,9 @@ class LSTMAnomalyClassifier:
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
-                    logger.info("Early stopping at epoch %d (patience=%d)", epoch + 1, patience)
+                    logger.info(
+                        "Early stopping at epoch %d (patience=%d)", epoch + 1, patience
+                    )
                     break
 
         if best_state:
@@ -457,8 +503,11 @@ class LSTMAnomalyClassifier:
 
         if len(sequences) == 0:
             return DeepLearningResult(
-                clip_id=clip_id, is_anomaly=False, severity=0.0,
-                anomaly_probability=0.0, error="video too short"
+                clip_id=clip_id,
+                is_anomaly=False,
+                severity=0.0,
+                anomaly_probability=0.0,
+                error="video too short",
             )
 
         self._model.eval()
@@ -470,13 +519,15 @@ class LSTMAnomalyClassifier:
         anomaly_windows = []
         for i, prob in enumerate(probs):
             if float(prob) >= self.threshold:
-                start_frame = i * SEQUENCE_LENGTH // 2   # approx (step = 50%)
-                anomaly_windows.append({
-                    "window_idx": i,
-                    "probability": float(prob),
-                    "start_frame": start_frame,
-                    "end_frame": start_frame + SEQUENCE_LENGTH,
-                })
+                start_frame = i * SEQUENCE_LENGTH // 2  # approx (step = 50%)
+                anomaly_windows.append(
+                    {
+                        "window_idx": i,
+                        "probability": float(prob),
+                        "start_frame": start_frame,
+                        "end_frame": start_frame + SEQUENCE_LENGTH,
+                    }
+                )
 
         max_prob = float(np.max(probs))
         return DeepLearningResult(
@@ -520,8 +571,11 @@ class LSTMAnomalyClassifier:
 
         if len(sequences) == 0:
             return DeepLearningResult(
-                clip_id=clip_id, is_anomaly=False, severity=0.0,
-                anomaly_probability=0.0, error="video too short",
+                clip_id=clip_id,
+                is_anomaly=False,
+                severity=0.0,
+                anomaly_probability=0.0,
+                error="video too short",
             )
 
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -533,16 +587,20 @@ class LSTMAnomalyClassifier:
     def save(self) -> None:
         """Save model weights and metadata to models/dl_lstm.pt."""
         import torch
+
         if self._model is None:
             raise RuntimeError("No model to save — train first.")
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({"state_dict": self._model.state_dict(),
-                    "metadata": self._metadata}, str(self.model_path))
+        torch.save(
+            {"state_dict": self._model.state_dict(), "metadata": self._metadata},
+            str(self.model_path),
+        )
         logger.info("Saved LSTM model to %s", self.model_path)
 
     def load(self) -> None:
         """Load model weights from models/dl_lstm.pt."""
         import torch
+
         if not self.model_path.exists():
             raise FileNotFoundError(f"No model at {self.model_path}. Train first.")
         checkpoint = torch.load(str(self.model_path), map_location=self.device)
@@ -587,7 +645,9 @@ class LSTMAnomalyClassifier:
             for clip, label in labeled:
                 seqs = load_dl_features(str(clip.id), features_dir)
                 if seqs is None or len(seqs) == 0:
-                    logger.warning("No DL features for %s — skipping", clip.filename_prefix)
+                    logger.warning(
+                        "No DL features for %s — skipping", clip.filename_prefix
+                    )
                     continue
                 all_X.append(seqs)
                 all_y.extend([int(label.is_anomaly)] * len(seqs))

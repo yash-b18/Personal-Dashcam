@@ -44,9 +44,10 @@ EVAL_OUTPUT_PATH = Path("data/outputs/classical_eval.json")
 @dataclass
 class ClassicalResult:
     """Inference result from the classical ML classifier."""
+
     clip_id: str
     is_anomaly: bool
-    anomaly_probability: float          # 0.0 – 1.0
+    anomaly_probability: float  # 0.0 – 1.0
     feature_importances: dict[str, float] = field(default_factory=dict)
     # Per-clip standardised feature values (z-scores vs the training
     # distribution). The most-positive z-score identifies which feature
@@ -66,8 +67,8 @@ class ClassicalAnomalyClassifier:
 
     def __init__(self, model_path: str | Path = MODEL_PATH) -> None:
         self.model_path = Path(model_path)
-        self._model = None          # xgboost.XGBClassifier
-        self._scaler = None         # sklearn.preprocessing.StandardScaler
+        self._model = None  # xgboost.XGBClassifier
+        self._scaler = None  # sklearn.preprocessing.StandardScaler
         self._feature_names: list[str] = []
 
     # ── Training ──────────────────────────────────────────────────────────────
@@ -98,12 +99,13 @@ class ClassicalAnomalyClassifier:
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.model_selection import StratifiedKFold, cross_validate
         from sklearn.preprocessing import StandardScaler
-        from sklearn.metrics import f1_score, roc_auc_score
-        from scripts.build_features import feature_names, load_features
+        from scripts.build_features import feature_names
 
         X, y, clip_ids = self._load_dataset(features_dir)
         if X is None:
-            raise RuntimeError("No labeled feature data found. Run build_features.py first.")
+            raise RuntimeError(
+                "No labeled feature data found. Run build_features.py first."
+            )
 
         self._feature_names = feature_names()
         n_pos = int(np.sum(y))
@@ -115,6 +117,7 @@ class ClassicalAnomalyClassifier:
             logger.info("Applying SMOTE (anomaly rate=%.1f%%)", 100 * n_pos / len(y))
             try:
                 from imblearn.over_sampling import SMOTE
+
                 X, y = SMOTE(random_state=random_state).fit_resample(X, y)
                 logger.info("After SMOTE: %d samples", len(y))
             except ImportError:
@@ -162,15 +165,15 @@ class ClassicalAnomalyClassifier:
         self._scaler = scaler
 
         metrics = {
-            "xgb_f1":         float(np.mean(xgb_scores["test_f1"])),
-            "xgb_auc":        float(np.mean(xgb_scores["test_roc_auc"])),
-            "xgb_precision":  float(np.mean(xgb_scores["test_precision"])),
-            "xgb_recall":     float(np.mean(xgb_scores["test_recall"])),
-            "rf_f1":          float(np.mean(rf_scores["test_f1"])),
-            "rf_auc":         float(np.mean(rf_scores["test_roc_auc"])),
-            "n_samples":      len(y),
-            "n_positive":     int(np.sum(y)),
-            "n_folds":        n_folds,
+            "xgb_f1": float(np.mean(xgb_scores["test_f1"])),
+            "xgb_auc": float(np.mean(xgb_scores["test_roc_auc"])),
+            "xgb_precision": float(np.mean(xgb_scores["test_precision"])),
+            "xgb_recall": float(np.mean(xgb_scores["test_recall"])),
+            "rf_f1": float(np.mean(rf_scores["test_f1"])),
+            "rf_auc": float(np.mean(rf_scores["test_roc_auc"])),
+            "n_samples": len(y),
+            "n_positive": int(np.sum(y)),
+            "n_folds": n_folds,
         }
 
         # Log feature importances
@@ -255,8 +258,14 @@ class ClassicalAnomalyClassifier:
             raise RuntimeError("No model to save — train first.")
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.model_path, "wb") as f:
-            pickle.dump({"model": self._model, "scaler": self._scaler,
-                         "feature_names": self._feature_names}, f)
+            pickle.dump(
+                {
+                    "model": self._model,
+                    "scaler": self._scaler,
+                    "feature_names": self._feature_names,
+                },
+                f,
+            )
         logger.info("Saved XGBoost model to %s", self.model_path)
 
     def load(self) -> None:
@@ -301,7 +310,9 @@ class ClassicalAnomalyClassifier:
             for clip, label in labeled:
                 vec = load_features(str(clip.id), features_dir)
                 if vec is None:
-                    logger.warning("No features for %s — skipping", clip.filename_prefix)
+                    logger.warning(
+                        "No features for %s — skipping", clip.filename_prefix
+                    )
                     continue
                 rows.append((vec, int(label.is_anomaly), str(clip.id)))
         finally:
@@ -319,13 +330,25 @@ class ClassicalAnomalyClassifier:
         """Save the Random Forest comparison model."""
         RF_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(RF_MODEL_PATH, "wb") as f:
-            pickle.dump({"model": rf_model, "scaler": scaler,
-                         "feature_names": self._feature_names}, f)
+            pickle.dump(
+                {
+                    "model": rf_model,
+                    "scaler": scaler,
+                    "feature_names": self._feature_names,
+                },
+                f,
+            )
         logger.info("Saved Random Forest model to %s", RF_MODEL_PATH)
 
     def _save_eval(self, metrics: dict, importances: dict) -> None:
         """Write evaluation metrics and feature importances to JSON."""
         EVAL_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         output = {"metrics": metrics, "feature_importances": importances}
-        EVAL_OUTPUT_PATH.write_text(json.dumps(output, indent=2, default=lambda o: float(o) if hasattr(o, 'item') else str(o)))
+        EVAL_OUTPUT_PATH.write_text(
+            json.dumps(
+                output,
+                indent=2,
+                default=lambda o: float(o) if hasattr(o, "item") else str(o),
+            )
+        )
         logger.info("Saved evaluation results to %s", EVAL_OUTPUT_PATH)

@@ -13,6 +13,7 @@ def test_health_check() -> None:
     """Health endpoint returns 200 with ok status."""
     # TestClient requires no env vars for the health route
     import unittest.mock as mock
+
     with mock.patch("api.config.get_settings") as mock_settings:
         mock_settings.return_value = mock.MagicMock(
             cors_origins=["http://localhost:3000"],

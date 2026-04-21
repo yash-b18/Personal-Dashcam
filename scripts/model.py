@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
-    parser = argparse.ArgumentParser(description="Train or run inference for DashcamIQ models")
+    parser = argparse.ArgumentParser(
+        description="Train or run inference for DashcamIQ models"
+    )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--train", action="store_true", help="Train the specified model")
     mode.add_argument("--predict", action="store_true", help="Run inference")
@@ -44,7 +46,9 @@ def parse_args() -> argparse.Namespace:
         choices=["baseline", "classical", "deep_learning", "all"],
         default="baseline",
     )
-    parser.add_argument("--video", type=str, default=None, help="Single video file path")
+    parser.add_argument(
+        "--video", type=str, default=None, help="Single video file path"
+    )
     parser.add_argument("--output", type=str, default="data/outputs")
     parser.add_argument(
         "--extract-dl-features",
@@ -52,11 +56,15 @@ def parse_args() -> argparse.Namespace:
         help="Extract DL feature sequences for all labeled clips (deep_learning only)",
     )
     parser.add_argument(
-        "--features-dir", type=str, default="data/processed",
+        "--features-dir",
+        type=str,
+        default="data/processed",
         help="Directory for feature .npz files",
     )
     parser.add_argument(
-        "--arch", choices=["lstm", "transformer"], default="lstm",
+        "--arch",
+        choices=["lstm", "transformer"],
+        default="lstm",
         help="DL architecture: lstm or transformer (deep_learning only)",
     )
     return parser.parse_args()
@@ -103,25 +111,33 @@ def run_baseline_predict(video_path: str | None, output_dir: Path) -> None:
         db = SessionLocal()
         results = []
         try:
-            clips = db.query(Clip).filter(
-                Clip.processing_status == ProcessingStatus.PENDING
-            ).all()
+            clips = (
+                db.query(Clip)
+                .filter(Clip.processing_status == ProcessingStatus.PENDING)
+                .all()
+            )
             logger.info("Running baseline on %d pending clips", len(clips))
             for clip in clips:
                 tmp_path = None
                 try:
                     tmp_path = r2.download_to_temp(clip.r2_key_front)
                     result = detector.predict(tmp_path)
-                    results.append({
-                        "clip_id": str(clip.id),
-                        "filename_prefix": clip.filename_prefix,
-                        "is_anomaly": result.is_anomaly,
-                        "severity": result.severity,
-                        "window_count": len(result.anomaly_windows),
-                        "error": result.error,
-                    })
-                    logger.info("[%s] anomaly=%s severity=%.2f",
-                        clip.filename_prefix, result.is_anomaly, result.severity)
+                    results.append(
+                        {
+                            "clip_id": str(clip.id),
+                            "filename_prefix": clip.filename_prefix,
+                            "is_anomaly": result.is_anomaly,
+                            "severity": result.severity,
+                            "window_count": len(result.anomaly_windows),
+                            "error": result.error,
+                        }
+                    )
+                    logger.info(
+                        "[%s] anomaly=%s severity=%.2f",
+                        clip.filename_prefix,
+                        result.is_anomaly,
+                        result.severity,
+                    )
                 except Exception as exc:
                     logger.error("Failed on %s: %s", clip.filename_prefix, exc)
                     results.append({"clip_id": str(clip.id), "error": str(exc)})
@@ -205,26 +221,28 @@ def run_baseline_evaluate(output_dir: Path) -> None:
     print("\n── Baseline Evaluation ───────────────────")
     for k, v in metrics.items():
         print(f"  {k:<28} {f'{v:.4f}' if isinstance(v, float) else v}")
-    print(f"\nReport:\n{classification_report(y_true, y_pred, target_names=['normal','anomaly'])}")
+    print(
+        f"\nReport:\n{classification_report(y_true, y_pred, target_names=['normal','anomaly'])}"
+    )
     print(f"Saved: {out_file}")
 
 
 def run_classical_train(output_dir: Path) -> None:
     """Train XGBoost + Random Forest on labeled clip features."""
     from scripts.models.classical import ClassicalAnomalyClassifier
+
     clf = ClassicalAnomalyClassifier()
     logger.info("Training classical models (XGBoost + Random Forest)...")
     metrics = clf.train()
     print("\n── Classical ML Results ──────────────────")
     for k, v in metrics.items():
         print(f"  {k:<28} {f'{v:.4f}' if isinstance(v, float) else v}")
-    print(f"\nModels saved to models/  |  Eval: data/outputs/classical_eval.json")
+    print("\nModels saved to models/  |  Eval: data/outputs/classical_eval.json")
 
 
 def run_classical_predict(clip_id: str | None, output_dir: Path) -> None:
     """Run XGBoost inference on a single clip or all DB clips."""
     from scripts.models.classical import ClassicalAnomalyClassifier
-    from scripts.build_features import load_features
 
     output_dir.mkdir(parents=True, exist_ok=True)
     clf = ClassicalAnomalyClassifier()
@@ -237,7 +255,8 @@ def run_classical_predict(clip_id: str | None, output_dir: Path) -> None:
         print(f"Probability: {result.anomaly_probability:.4f}")
     else:
         from api.database import SessionLocal
-        from api.models.db_models import Clip, Label
+        from api.models.db_models import Clip
+
         db = SessionLocal()
         try:
             clip_ids = [str(c.id) for c in db.query(Clip).all()]
@@ -248,8 +267,13 @@ def run_classical_predict(clip_id: str | None, output_dir: Path) -> None:
         for cid in clip_ids:
             try:
                 r = clf.predict(cid)
-                results.append({"clip_id": cid, "is_anomaly": r.is_anomaly,
-                                 "probability": r.anomaly_probability})
+                results.append(
+                    {
+                        "clip_id": cid,
+                        "is_anomaly": r.is_anomaly,
+                        "probability": r.anomaly_probability,
+                    }
+                )
             except FileNotFoundError:
                 results.append({"clip_id": cid, "error": "no features"})
 
@@ -323,7 +347,9 @@ def run_dl_train(features_dir: Path, output_dir: Path, arch: str = "lstm") -> No
     print(f"  Eval saved:           {clf.eval_output_path}")
 
 
-def run_dl_predict(video_path: str | None, features_dir: Path, output_dir: Path) -> None:
+def run_dl_predict(
+    video_path: str | None, features_dir: Path, output_dir: Path
+) -> None:
     """Run LSTM inference on a single video or all clips with pre-extracted features."""
     from scripts.models.deep_learning import LSTMAnomalyClassifier
 
@@ -342,7 +368,8 @@ def run_dl_predict(video_path: str | None, features_dir: Path, output_dir: Path)
             print(f"Error:        {result.error}")
         return
 
-    import glob as _glob, json as _json
+    import json as _json
+
     feature_files = list(features_dir.glob("*_dl_features.npz"))
     if not feature_files:
         print("No DL feature files found. Run --extract-dl-features first.")
@@ -354,12 +381,14 @@ def run_dl_predict(video_path: str | None, features_dir: Path, output_dir: Path)
         try:
             clf.load()
             r = clf.predict(clip_id, features_dir=features_dir)
-            results.append({
-                "clip_id": clip_id,
-                "is_anomaly": r.is_anomaly,
-                "probability": r.anomaly_probability,
-                "n_anomaly_windows": len(r.anomaly_windows),
-            })
+            results.append(
+                {
+                    "clip_id": clip_id,
+                    "is_anomaly": r.is_anomaly,
+                    "probability": r.anomaly_probability,
+                    "n_anomaly_windows": len(r.anomaly_windows),
+                }
+            )
         except Exception as exc:
             results.append({"clip_id": clip_id, "error": str(exc)})
 
@@ -377,7 +406,9 @@ def main() -> None:
     if args.model == "baseline":
         if args.train:
             print("Baseline is rule-based — no training needed.")
-            print("Edit MAGNITUDE_THRESHOLD / VARIANCE_THRESHOLD in scripts/models/baseline.py.")
+            print(
+                "Edit MAGNITUDE_THRESHOLD / VARIANCE_THRESHOLD in scripts/models/baseline.py."
+            )
         elif args.predict:
             run_baseline_predict(args.video, output_dir)
         elif args.evaluate:
@@ -389,7 +420,9 @@ def main() -> None:
         elif args.predict:
             run_classical_predict(args.video, output_dir)
         elif args.evaluate:
-            logger.info("Classical evaluation runs automatically during --train via k-fold CV.")
+            logger.info(
+                "Classical evaluation runs automatically during --train via k-fold CV."
+            )
             run_classical_train(output_dir)
 
     elif args.model == "deep_learning":
@@ -400,7 +433,9 @@ def main() -> None:
         elif args.predict:
             run_dl_predict(args.video, Path(args.features_dir), output_dir)
         elif args.evaluate:
-            logger.info("DL evaluation runs automatically during --train (loss/F1/AUC history saved).")
+            logger.info(
+                "DL evaluation runs automatically during --train (loss/F1/AUC history saved)."
+            )
             run_dl_train(Path(args.features_dir), output_dir, arch=args.arch)
 
     else:
