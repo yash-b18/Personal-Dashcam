@@ -507,7 +507,13 @@ class LSTMAnomalyClassifier:
         Returns:
             DeepLearningResult.
         """
-        from api.video.sequence_builder import SequenceBuilder
+        from api.video.sequence_builder import SequenceBuilder, save_dl_features
+
+        cache_dir = Path("data/processed")
+        cached = cache_dir / f"{clip_id}_dl_features.npz"
+        if cached.exists():
+            logger.info("[%s] Using cached DL features from %s", clip_id, cached)
+            return self.predict(clip_id, features_dir=cache_dir)
 
         builder = SequenceBuilder(yolo_model_path=yolo_model_path, device=self.device)
         sequences = builder.build_sequences(video_path)
@@ -518,16 +524,9 @@ class LSTMAnomalyClassifier:
                 anomaly_probability=0.0, error="video too short",
             )
 
-        import tempfile
-        tmp = Path(tempfile.mktemp(suffix=".npz"))
-        try:
-            from api.video.sequence_builder import save_dl_features
-            save_dl_features(clip_id, sequences, output_dir=tmp.parent)
-            return self.predict(clip_id, features_dir=tmp.parent)
-        finally:
-            dl_path = tmp.parent / f"{clip_id}_dl_features.npz"
-            if dl_path.exists():
-                dl_path.unlink()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        save_dl_features(clip_id, sequences, output_dir=cache_dir)
+        return self.predict(clip_id, features_dir=cache_dir)
 
     # ── Persistence ───────────────────────────────────────────────────────────
 

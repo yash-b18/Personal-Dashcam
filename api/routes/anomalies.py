@@ -3,6 +3,9 @@ Anomaly endpoints.
 
 GET  /anomalies            — paginated list with filters
 GET  /anomalies/{id}       — detail with AI explanation and presigned clip URL
+
+The production pipeline only runs the classical model, so listings are
+filtered to classical detections.
 """
 
 import uuid
@@ -11,11 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from api.database import get_db
-from api.models.db_models import Anomaly, Clip
+from api.models.db_models import Anomaly, Clip, ModelType
 from api.schemas import AnomalyDetail, AnomalyListResponse, AnomalySummary
 from api.storage.r2_client import R2Client
 
 router = APIRouter(prefix="/anomalies", tags=["anomalies"])
+
+_MODEL = ModelType.CLASSICAL
 
 
 @router.get("", response_model=AnomalyListResponse)
@@ -23,20 +28,16 @@ def list_anomalies(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     anomaly_type: str | None = Query(None),
-    model_type: str | None = Query(None),
     min_severity: float = Query(0.0, ge=0.0, le=1.0),
+    clip_id: uuid.UUID | None = Query(None, description="Filter by clip"),
     db: Session = Depends(get_db),
 ) -> AnomalyListResponse:
-    """
-    List all detected anomalies with optional filters.
-
-    Supports filtering by anomaly_type, model_type, and min_severity.
-    """
-    query = db.query(Anomaly)
+    """List classical-model anomalies with optional filters."""
+    query = db.query(Anomaly).filter(Anomaly.model_type == _MODEL)
+    if clip_id is not None:
+        query = query.filter(Anomaly.clip_id == clip_id)
     if anomaly_type:
         query = query.filter(Anomaly.anomaly_type == anomaly_type)
-    if model_type:
-        query = query.filter(Anomaly.model_type == model_type)
     if min_severity > 0:
         query = query.filter(Anomaly.severity >= min_severity)
 
@@ -73,9 +74,7 @@ def list_anomalies(
 
 @router.get("/{anomaly_id}", response_model=AnomalyDetail)
 def get_anomaly(anomaly_id: uuid.UUID, db: Session = Depends(get_db)) -> AnomalyDetail:
-    """
-    Get full anomaly detail including AI explanation and presigned video URL.
-    """
+    """Get full anomaly detail including AI explanation and presigned video URL."""
     anomaly = db.query(Anomaly).filter(Anomaly.id == anomaly_id).first()
     if not anomaly:
         raise HTTPException(status_code=404, detail="Anomaly not found")

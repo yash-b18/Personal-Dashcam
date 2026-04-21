@@ -1,14 +1,18 @@
 """
 Celery tasks for async video processing.
 
-Full pipeline for a single clip:
+Production pipeline (single model — classical ML):
   1. Download front video from R2 to a temp file
-  2. Run optical flow baseline detector
-  3. Map baseline anomaly windows → AnomalyType via heuristic
+  2. Extract features (optical-flow + object statistics)
+  3. Run classical anomaly classifier → (is_anomaly, probability, features)
   4. Compute per-clip driving score
-  5. Generate Claude AI explanation for each anomaly
+  5. Generate Claude AI explanation for any flagged anomaly
   6. Persist Anomaly + Score rows to PostgreSQL
   7. Update clip.processing_status → DONE (or FAILED on error)
+
+The classical model has F1=0.97 vs user labels on this dataset and was
+chosen as the deployed model. The baseline and LSTM live in scripts/models
+for the written report's three-model comparison but do not run on uploads.
 """
 
 import logging
@@ -22,19 +26,11 @@ logger = logging.getLogger(__name__)
 
 
 def _recalculate_overall_score(db) -> None:
-    """
-    Recompute the OverallDriverScore from all per-clip Score rows.
-    Called automatically after every clip finishes processing.
-    """
+    """Recompute the OverallDriverScore from all classical per-clip scores."""
     from api.models.db_models import ModelType, OverallDriverScore, Score
-    from scripts.scoring import ClipScoreResult, compute_overall_score, assign_grade
+    from scripts.scoring import ClipScoreResult, compute_overall_score
 
-    # Fetch all baseline scores (one per clip)
-    score_rows = (
-        db.query(Score)
-        .filter(Score.model_type == ModelType.BASELINE)
-        .all()
-    )
+    score_rows = db.query(Score).filter(Score.model_type == ModelType.CLASSICAL).all()
     if not score_rows:
         return
 
@@ -48,12 +44,11 @@ def _recalculate_overall_score(db) -> None:
         )
         for row in score_rows
     ]
-
     result = compute_overall_score(clip_scores)
 
-    # Upsert OverallDriverScore (keep only one row)
     existing = db.query(OverallDriverScore).first()
     if existing:
+        existing.model_type = ModelType.CLASSICAL
         existing.score = result.score
         existing.grade = result.grade
         existing.clips_analyzed = result.clips_analyzed
@@ -61,6 +56,7 @@ def _recalculate_overall_score(db) -> None:
         existing.calculated_at = datetime.now(timezone.utc)
     else:
         db.add(OverallDriverScore(
+            model_type=ModelType.CLASSICAL,
             score=result.score,
             grade=result.grade,
             clips_analyzed=result.clips_analyzed,
@@ -74,37 +70,37 @@ def _recalculate_overall_score(db) -> None:
     )
 
 
-def _heuristic_anomaly_type(window: dict, clip_severity: float) -> str:
+def _anomaly_type_from_features(feature_importances: dict) -> str:
     """
-    Map a baseline anomaly window to an AnomalyType based on heuristics.
+    Pick an AnomalyType from the classical model's top feature importances.
 
-    Peak magnitude and severity give a coarse signal:
-    - Very high peak + high severity → near_miss
-    - High peak → hard_braking
-    - Moderate variance → lane_departure
-    - Low peak but flagged → harsh_cornering
+    The classical model is a single binary classifier; mapping its top-weighted
+    feature to a human-readable category keeps the UI's detail labels useful
+    instead of showing every flagged clip as "OTHER".
     """
-    peak = window.get("peak_magnitude", 0.0)
-    sev = window.get("severity", clip_severity)
-
-    if sev >= 0.8 and peak >= 25.0:
-        return "near_miss"
-    elif peak >= 20.0:
+    if not feature_importances:
+        return "other"
+    top = max(feature_importances, key=feature_importances.get)
+    t = top.lower()
+    if "brake" in t or "decel" in t:
         return "hard_braking"
-    elif peak >= 15.0:
+    if "lane" in t or "lateral" in t:
         return "lane_departure"
-    elif sev >= 0.5:
+    if "corner" in t or "yaw" in t or "turn" in t:
         return "harsh_cornering"
+    if "speed" in t or "accel" in t:
+        return "aggressive_lane_change"
     return "other"
 
 
 @celery_app.task(name="api.tasks.video_tasks.process_clip", bind=True, max_retries=3)
 def process_clip(self, clip_id: str) -> dict:
     """
-    Full async pipeline for a single clip.
+    Async pipeline for a single clip — classical ML only.
 
-    Downloads the front video, runs the baseline detector, scores the clip,
-    generates AI explanations, and persists everything to the DB.
+    Downloads the front video, extracts features, runs the classical
+    classifier, scores the clip, generates an AI explanation if flagged,
+    and persists the results.
     """
     from api.database import SessionLocal
     from api.models.db_models import (
@@ -115,7 +111,8 @@ def process_clip(self, clip_id: str) -> dict:
         ProcessingStatus,
         Score,
     )
-    from scripts.models.baseline import OpticalFlowBaseline
+    from scripts.build_features import extract_features, save_features
+    from scripts.models.classical import ClassicalAnomalyClassifier
     from scripts.scoring import AnomalyInput
     from scripts.scoring import AnomalyType as ScoringAnomalyType
     from scripts.scoring import score_clip as compute_score
@@ -133,88 +130,91 @@ def process_clip(self, clip_id: str) -> dict:
         clip.processing_status = ProcessingStatus.PROCESSING
         db.commit()
 
-        # ── 1. Download front video ───────────────────────────────────────
+        # 1. Download
         from api.storage.r2_client import R2Client
         r2 = R2Client()
         tmp_path = r2.download_to_temp(clip.r2_key_front)
         logger.info("[%s] Downloaded to %s", clip.filename_prefix, tmp_path)
 
-        # ── 2. Run baseline detector ──────────────────────────────────────
-        detector = OpticalFlowBaseline()
-        result = detector.predict(tmp_path)
+        # 2. Feature extraction (cache by clip_id)
+        cached = Path(f"data/processed/{clip_id}_features.npz")
+        if not cached.exists():
+            features = extract_features(tmp_path)
+            save_features(clip_id, features)
+
+        # 3. Classical classifier
+        clf = ClassicalAnomalyClassifier()
+        result = clf.predict(clip_id)
         logger.info(
-            "[%s] Baseline: anomaly=%s severity=%.3f windows=%d",
-            clip.filename_prefix, result.is_anomaly,
-            result.severity, len(result.anomaly_windows),
+            "[%s] Classical: anomaly=%s prob=%.3f",
+            clip.filename_prefix, result.is_anomaly, result.anomaly_probability,
         )
 
-        # ── 3. Map windows → DB Anomaly rows ──────────────────────────────
-        anomaly_inputs: list[AnomalyInput] = []
-        anomaly_db_rows: list[Anomaly] = []
+        # Wipe prior rows for this clip across all model types so a reprocess
+        # leaves only the current single-model output visible.
+        for mt in (ModelType.BASELINE, ModelType.CLASSICAL, ModelType.DEEP_LEARNING):
+            db.query(Anomaly).filter(
+                Anomaly.clip_id == clip.id, Anomaly.model_type == mt
+            ).delete()
+            db.query(Score).filter(
+                Score.clip_id == clip.id, Score.model_type == mt
+            ).delete()
 
-        if result.is_anomaly and result.anomaly_windows:
-            for w in result.anomaly_windows:
-                atype_str = _heuristic_anomaly_type(w, result.severity)
-                try:
-                    atype = AnomalyType(atype_str)
-                    scoring_atype = ScoringAnomalyType(atype_str)
-                except ValueError:
-                    atype = AnomalyType.OTHER
-                    scoring_atype = ScoringAnomalyType.OTHER
+        # 4. Build anomaly row (if flagged) + score
+        anomaly_rows: list[Anomaly] = []
+        score_inputs: list[AnomalyInput] = []
 
-                win_severity = float(w.get("severity", result.severity))
-                anomaly_inputs.append(AnomalyInput(scoring_atype, win_severity))
-
-                anomaly_db_rows.append(Anomaly(
-                    clip_id=clip.id,
-                    model_type=ModelType.BASELINE,
-                    anomaly_type=atype,
-                    severity=win_severity,
-                    confidence=min(win_severity + 0.1, 1.0),
-                    timestamp_start=float(w.get("start_second", 0.0)),
-                    timestamp_end=float(w.get("end_second", 0.0)),
-                    score_impact=0.0,   # filled after scoring
-                    detection_metadata={
-                        "peak_magnitude": w.get("peak_magnitude"),
-                        "total_frames": result.total_frames,
-                        "fps": result.fps,
-                    },
-                ))
-
-        # ── 4. Score the clip ─────────────────────────────────────────────
-        score_result = compute_score(clip_id, anomaly_inputs)
-
-        # Back-fill score_impact per anomaly type
-        type_impacts = dict(score_result.deduction_breakdown)
-        type_counts: dict[str, int] = {}
-        for row in anomaly_db_rows:
-            k = row.anomaly_type.value
-            type_counts[k] = type_counts.get(k, 0) + 1
-
-        for row in anomaly_db_rows:
-            k = row.anomaly_type.value
-            impact = type_impacts.get(k, 0.0)
-            count = type_counts.get(k, 1)
-            row.score_impact = round(impact / count, 2)
-
-        # ── 5. Generate AI explanations ───────────────────────────────────
-        if anomaly_db_rows:
-            explainer = AnomalyExplainer()
-            anomaly_dicts = [
-                {
-                    "anomaly_id": str(uuid.uuid4()),
-                    "anomaly_type": row.anomaly_type.value,
-                    "severity": row.severity,
-                    "score_impact": row.score_impact,
-                    "detected_objects": [],
-                    "timestamp_start": row.timestamp_start,
-                    "timestamp_end": row.timestamp_end,
-                }
-                for row in anomaly_db_rows
-            ]
+        if result.is_anomaly:
+            type_str = _anomaly_type_from_features(result.feature_importances)
             try:
+                atype = AnomalyType(type_str)
+                scoring_atype = ScoringAnomalyType(type_str)
+            except ValueError:
+                atype = AnomalyType.OTHER
+                scoring_atype = ScoringAnomalyType.OTHER
+
+            score_inputs.append(AnomalyInput(scoring_atype, result.anomaly_probability))
+            anomaly_rows.append(Anomaly(
+                clip_id=clip.id,
+                model_type=ModelType.CLASSICAL,
+                anomaly_type=atype,
+                severity=result.anomaly_probability,
+                confidence=result.anomaly_probability,
+                timestamp_start=0.0,
+                timestamp_end=float(clip.duration_seconds or 0.0),
+                score_impact=0.0,
+                detection_metadata={
+                    "top_features": dict(
+                        sorted(result.feature_importances.items(),
+                               key=lambda x: x[1], reverse=True)[:5]
+                    ),
+                },
+            ))
+
+        score_result = compute_score(clip_id, score_inputs)
+
+        # Attach per-anomaly deduction for UI display
+        for row in anomaly_rows:
+            row.score_impact = round(score_result.deduction_breakdown.get(row.anomaly_type.value, 0.0), 2)
+
+        # 5. AI explanation (only if flagged)
+        if anomaly_rows:
+            try:
+                explainer = AnomalyExplainer()
+                anomaly_dicts = [
+                    {
+                        "anomaly_id": str(uuid.uuid4()),
+                        "anomaly_type": row.anomaly_type.value,
+                        "severity": row.severity,
+                        "score_impact": row.score_impact,
+                        "detected_objects": [],
+                        "timestamp_start": row.timestamp_start,
+                        "timestamp_end": row.timestamp_end,
+                    }
+                    for row in anomaly_rows
+                ]
                 explanations = explainer.explain_batch(anomaly_dicts)
-                for row, exp in zip(anomaly_db_rows, explanations):
+                for row, exp in zip(anomaly_rows, explanations):
                     row.ai_explanation = (
                         f"{exp.explanation}\n\n"
                         f"Recommendation: {exp.recommendation}\n\n"
@@ -223,34 +223,23 @@ def process_clip(self, clip_id: str) -> dict:
             except Exception as exc:
                 logger.warning("[%s] AI explanation failed: %s", clip.filename_prefix, exc)
 
-        # ── 6. Persist to DB ──────────────────────────────────────────────
-        # Remove old baseline results for this clip to avoid duplicates
-        db.query(Anomaly).filter(
-            Anomaly.clip_id == clip.id, Anomaly.model_type == ModelType.BASELINE
-        ).delete()
-        db.query(Score).filter(
-            Score.clip_id == clip.id, Score.model_type == ModelType.BASELINE
-        ).delete()
-
-        for row in anomaly_db_rows:
+        # 6. Persist
+        for row in anomaly_rows:
             db.add(row)
-
-        score_row = Score(
+        db.add(Score(
             clip_id=clip.id,
-            model_type=ModelType.BASELINE,
+            model_type=ModelType.CLASSICAL,
             score=score_result.score,
             grade=score_result.grade,
             anomaly_count=score_result.anomaly_count,
-        )
-        db.add(score_row)
+        ))
 
-        # ── 7. Update clip status ─────────────────────────────────────────
         clip.processing_status = ProcessingStatus.DONE
         clip.processed_at = datetime.now(timezone.utc)
         clip.processing_error = None
         db.commit()
 
-        # ── 8. Recalculate overall driver score ───────────────────────────
+        # 7. Overall score
         try:
             _recalculate_overall_score(db)
         except Exception as exc:
@@ -259,13 +248,13 @@ def process_clip(self, clip_id: str) -> dict:
         logger.info(
             "[%s] Done — score=%.1f grade=%s anomalies=%d",
             clip.filename_prefix, score_result.score,
-            score_result.grade, len(anomaly_db_rows),
+            score_result.grade, len(anomaly_rows),
         )
         return {
             "clip_id": clip_id,
             "score": score_result.score,
             "grade": score_result.grade,
-            "anomaly_count": len(anomaly_db_rows),
+            "anomaly_count": len(anomaly_rows),
         }
 
     except Exception as exc:
