@@ -31,12 +31,16 @@ Usage:
     python scripts/extract_yolo_features.py --all
     python scripts/extract_yolo_features.py --clip-id <UUID>
     python scripts/extract_yolo_features.py --all --force
-    python scripts/extract_yolo_features.py --input-dir <dir with .mp4>   # Colab mode
+    python scripts/extract_yolo_features.py --input-dir <dir with .mp4>       # offline mode
+    python scripts/extract_yolo_features.py --manifest data/clip_manifest.json  # Colab mode
 """
 
 import argparse
+import json
 import logging
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import cv2
@@ -203,8 +207,12 @@ def parse_args() -> argparse.Namespace:
     src.add_argument("--all", action="store_true", help="Process all labeled clips from DB.")
     src.add_argument("--clip-id", type=str, help="Single clip UUID from DB.")
     src.add_argument("--input-dir", type=Path,
-                     help="Colab/offline mode: process every .mp4 in this dir. "
+                     help="Offline mode: process every .mp4 in this dir. "
                           "Output is keyed by the filename stem.")
+    src.add_argument("--manifest", type=Path,
+                     help="Colab mode: read a JSON list of {clip_id, r2_key_front} "
+                          "and pull each clip from R2 using env-var credentials. "
+                          "No DB access required.")
     p.add_argument("--output-dir", type=Path, default=PROCESSED_DIR)
     p.add_argument("--weights", type=Path, default=WEIGHTS_PATH)
     p.add_argument("--imgsz", type=int, default=640)
@@ -298,15 +306,77 @@ def _run_from_dir(args: argparse.Namespace, model) -> None:
     logger.info("  Output:    %s/", args.output_dir)
 
 
+def _make_r2_client_from_env():
+    """Build a raw boto3 S3 client from env vars — no Settings/DB dependency."""
+    import boto3
+    from botocore.config import Config
+
+    account_id = os.environ["R2_ACCOUNT_ID"]
+    bucket = os.environ.get("R2_BUCKET_NAME") or os.environ.get("R2_BUCKET")
+    if not bucket:
+        raise RuntimeError("Set R2_BUCKET_NAME (or R2_BUCKET) in the environment.")
+    client = boto3.client(
+        "s3",
+        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+        region_name="auto",
+        config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "adaptive"}),
+    )
+    return client, bucket
+
+
+def _run_from_manifest(args: argparse.Namespace, model) -> None:
+    """DB-free mode for Colab: read a JSON manifest and pull clips from R2."""
+    entries = json.loads(args.manifest.read_text())
+    if not entries:
+        logger.error("Manifest %s is empty.", args.manifest)
+        sys.exit(1)
+
+    client, bucket = _make_r2_client_from_env()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    extracted = skipped = failed = 0
+
+    for entry in tqdm(entries, desc="YOLO features", unit="clip"):
+        clip_id = entry["clip_id"]
+        key = entry["r2_key_front"]
+        out = args.output_dir / f"{clip_id}_yolo.npz"
+        if out.exists() and not args.force:
+            skipped += 1
+            continue
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                client.download_fileobj(bucket, key, tmp)
+                tmp_path = Path(tmp.name)
+            vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz)
+            save_yolo_features(clip_id, vec, out_dir=args.output_dir)
+            extracted += 1
+        except Exception as exc:
+            logger.error("Failed on %s (%s): %s", clip_id, key, exc)
+            failed += 1
+        finally:
+            if tmp_path and tmp_path.exists():
+                tmp_path.unlink()
+
+    logger.info("── YOLO Feature Extraction (manifest) ──────")
+    logger.info("  Extracted: %d", extracted)
+    logger.info("  Skipped:   %d", skipped)
+    logger.info("  Failed:    %d", failed)
+    logger.info("  Output:    %s/", args.output_dir)
+
+
 def main() -> None:
     args = parse_args()
-    if not any([args.all, args.clip_id, args.input_dir]):
-        logger.error("Specify --all, --clip-id <UUID>, or --input-dir <path>")
+    if not any([args.all, args.clip_id, args.input_dir, args.manifest]):
+        logger.error("Specify --all, --clip-id <UUID>, --input-dir <path>, or --manifest <json>")
         sys.exit(1)
 
     model = _load_model(args.weights, args.device)
 
-    if args.input_dir:
+    if args.manifest:
+        _run_from_manifest(args, model)
+    elif args.input_dir:
         _run_from_dir(args, model)
     else:
         _run_from_db(args, model)
