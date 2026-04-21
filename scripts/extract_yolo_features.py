@@ -153,6 +153,7 @@ def extract_yolo_features(
     target_fps: float = SAMPLE_FPS,
     conf: float = CONF_THRESHOLD,
     imgsz: int = 640,
+    device: str | None = None,
 ) -> np.ndarray:
     """Run YOLOv8 on one clip and return a 20-dim feature vector."""
     video_path = Path(video_path)
@@ -162,11 +163,14 @@ def extract_yolo_features(
 
     frame_area = float(frames[0].shape[0] * frames[0].shape[1])
 
-    # YOLO inference — batched for GPU efficiency.
+    # YOLO inference. Must pass device= here explicitly — model.to("cuda") at
+    # load time doesn't always stick through ultralytics' predict() (it can
+    # silently fall back to CPU, ~30s/clip vs ~2s on L4).
     results = model.predict(
         frames,
         imgsz=imgsz,
         conf=conf,
+        device=device,
         verbose=False,
     )
 
@@ -229,8 +233,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def _load_model(weights: Path, device: str | None):
+    import torch
     from ultralytics import YOLO
     logger.info("Loading YOLOv8 weights from %s (device=%s)", weights, device or "auto")
+    logger.info("  torch.cuda.is_available=%s cuda.device_count=%d",
+                torch.cuda.is_available(), torch.cuda.device_count())
+    if device and device.startswith("cuda") and not torch.cuda.is_available():
+        logger.warning("Requested device=%s but CUDA is not available — falling back to CPU.",
+                       device)
     model = YOLO(str(weights))
     if device:
         model.to(device)
@@ -264,7 +274,7 @@ def _run_from_db(args: argparse.Namespace, model) -> None:
         tmp = None
         try:
             tmp = r2.download_to_temp(clip.r2_key_front)
-            vec = extract_yolo_features(tmp, model, imgsz=args.imgsz)
+            vec = extract_yolo_features(tmp, model, imgsz=args.imgsz, device=args.device)
             save_yolo_features(str(clip.id), vec, out_dir=args.output_dir)
             extracted += 1
         except Exception as exc:
@@ -298,7 +308,7 @@ def _run_from_dir(args: argparse.Namespace, model) -> None:
             skipped += 1
             continue
         try:
-            vec = extract_yolo_features(v, model, imgsz=args.imgsz)
+            vec = extract_yolo_features(v, model, imgsz=args.imgsz, device=args.device)
             save_yolo_features(stem, vec, out_dir=args.output_dir)
             extracted += 1
         except Exception as exc:
@@ -392,7 +402,7 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
             tmp_path = None
             try:
                 clip_id, tmp_path = fut.result()
-                vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz)
+                vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz, device=args.device)
                 save_yolo_features(clip_id, vec, out_dir=args.output_dir)
                 extracted += 1
             except Exception as exc:
