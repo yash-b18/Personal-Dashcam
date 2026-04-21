@@ -229,12 +229,28 @@ function AnomalyModal({ id, onClose }: { id: string; onClose: () => void }) {
           style={{ background: "var(--color-panel)", borderBottom: "1px solid var(--color-border)" }}
         >
           <div className="flex items-start justify-between gap-4">
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="section-label mb-1.5">Anomaly Detail</p>
               {loading ? (
                 <Skeleton className="h-6 w-36" />
               ) : detail ? (
-                <AnomalyTypeBadge type={detail.anomaly_type} />
+                <div className="space-y-1.5">
+                  <AnomalyTypeBadge type={detail.anomaly_type} />
+                  {detail.detection_metadata?.ambiguous_type && (
+                    <div
+                      className="inline-flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider px-2 py-1 rounded"
+                      style={{
+                        background: "rgba(245,158,11,0.08)",
+                        border: "1px solid rgba(245,158,11,0.25)",
+                        color: "#F59E0B",
+                      }}
+                      title="No motion feature exceeded the commit threshold (z ≥ 1.0); the binary classifier flagged the clip as anomalous but the 19 motion features don't match a specific behaviour."
+                    >
+                      <Info size={9} />
+                      Type unclear — weak motion signature
+                    </div>
+                  )}
+                </div>
               ) : null}
             </div>
             <button
@@ -323,22 +339,12 @@ function AnomalyModal({ id, onClose }: { id: string; onClose: () => void }) {
                     <SeverityBar severity={detail.severity} />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-                    {[
-                      { k: "Clip",    v: detail.clip_filename ?? "—" },
-                      { k: "Model",   v: detail.model_type },
-                      { k: "Detected", v: formatDate(detail.detected_at) },
-                      { k: "Clip ID", v: String(detail.clip_id).slice(0, 8) + "…" },
-                    ].map(({ k, v }) => (
-                      <div
-                        key={k}
-                        className="flex items-center justify-between rounded-lg px-3 py-2"
-                        style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
-                      >
-                        <span style={{ color: "var(--color-ink-tertiary)" }}>{k}</span>
-                        <span style={{ color: "var(--color-ink-primary)" }}>{v}</span>
-                      </div>
-                    ))}
+                  <div
+                    className="flex items-center justify-between rounded-lg px-3 py-2 font-mono text-[11px]"
+                    style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
+                  >
+                    <span style={{ color: "var(--color-ink-tertiary)" }}>Clip</span>
+                    <span style={{ color: "var(--color-ink-primary)" }}>{detail.clip_filename ?? "—"}</span>
                   </div>
                 </div>
               )}

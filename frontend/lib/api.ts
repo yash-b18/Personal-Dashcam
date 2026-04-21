@@ -162,15 +162,40 @@ export const api = {
     get: (id: string) => request<ClipDetail>(`/videos/${id}`),
     process: (id: string) => request<ProcessResponse>(`/videos/${id}/process`, { method: "POST" }),
     processAll: () => request<{ enqueued: number; status: string }>("/videos/process-all", { method: "POST" }),
+    reprocessAll: () => request<{ enqueued: number; status: string }>("/videos/reprocess-all", { method: "POST" }),
+    upload: async (file: File, onProgress?: (pct: number) => void): Promise<ProcessResponse> => {
+      // XMLHttpRequest lets us report upload progress; fetch does not.
+      return new Promise((resolve, reject) => {
+        const form = new FormData();
+        form.append("file", file);
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${API_BASE}/videos/upload`);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) onProgress((e.loaded / e.total) * 100);
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try { resolve(JSON.parse(xhr.responseText) as ProcessResponse); }
+            catch (err) { reject(err); }
+          } else {
+            reject(new Error(`Upload ${xhr.status}: ${xhr.responseText}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error("Network error during upload"));
+        xhr.send(form);
+      });
+    },
   },
 
   // Anomalies
   anomalies: {
-    list: (params?: { page?: number; page_size?: number; anomaly_type?: string; min_severity?: number }) => {
+    list: (params?: { page?: number; page_size?: number; anomaly_type?: string; min_severity?: number; clip_id?: string; model_type?: string }) => {
       const q = new URLSearchParams();
       if (params?.page)          q.set("page",          String(params.page));
       if (params?.page_size)     q.set("page_size",     String(params.page_size));
       if (params?.anomaly_type)  q.set("anomaly_type",  params.anomaly_type);
+      if (params?.model_type)    q.set("model_type",    params.model_type);
+      if (params?.clip_id)       q.set("clip_id",       params.clip_id);
       if (params?.min_severity != null) q.set("min_severity", String(params.min_severity));
       return request<AnomalyListResponse>(`/anomalies?${q}`);
     },

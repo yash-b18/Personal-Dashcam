@@ -116,6 +116,29 @@ class R2Client:
         finally:
             tmp.close()
 
+    # ── Upload ────────────────────────────────────────────────────────
+
+    def upload_fileobj(self, fileobj, key: str, content_type: str = "video/mp4") -> None:
+        """
+        Upload a file-like object to R2 under the given key.
+
+        Args:
+            fileobj: Readable binary file-like object.
+            key: Full R2 object key (e.g. "uploads/abc123_clip.mp4").
+            content_type: MIME type (default "video/mp4").
+        """
+        try:
+            self._client.upload_fileobj(
+                fileobj,
+                self._bucket,
+                key,
+                ExtraArgs={"ContentType": content_type},
+            )
+            logger.info("Uploaded to R2: %s", key)
+        except ClientError as exc:
+            logger.error("Failed to upload %s: %s", key, exc)
+            raise
+
     # ── Presigned URLs ────────────────────────────────────────────────
 
     def presigned_url(self, key: str, expires_in: int = 3600) -> str:

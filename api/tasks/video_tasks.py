@@ -1,14 +1,18 @@
 """
 Celery tasks for async video processing.
 
-Full pipeline for a single clip:
+Production pipeline (single model — classical ML):
   1. Download front video from R2 to a temp file
-  2. Run optical flow baseline detector
-  3. Map baseline anomaly windows → AnomalyType via heuristic
+  2. Extract features (optical-flow + object statistics)
+  3. Run classical anomaly classifier → (is_anomaly, probability, features)
   4. Compute per-clip driving score
-  5. Generate Claude AI explanation for each anomaly
+  5. Generate Claude AI explanation for any flagged anomaly
   6. Persist Anomaly + Score rows to PostgreSQL
   7. Update clip.processing_status → DONE (or FAILED on error)
+
+The classical model has F1=0.97 vs user labels on this dataset and was
+chosen as the deployed model. The baseline and LSTM live in scripts/models
+for the written report's three-model comparison but do not run on uploads.
 """
 
 import logging
@@ -21,20 +25,113 @@ from api.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def _recalculate_overall_score(db) -> None:
-    """
-    Recompute the OverallDriverScore from all per-clip Score rows.
-    Called automatically after every clip finishes processing.
-    """
-    from api.models.db_models import ModelType, OverallDriverScore, Score
-    from scripts.scoring import ClipScoreResult, compute_overall_score, assign_grade
+def _probe_duration_seconds(video_path: str | Path) -> float | None:
+    """Return the video's duration in seconds using OpenCV (frames / fps).
 
-    # Fetch all baseline scores (one per clip)
-    score_rows = (
-        db.query(Score)
-        .filter(Score.model_type == ModelType.BASELINE)
-        .all()
-    )
+    Returns None on any probing failure — callers must fall back gracefully.
+    """
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        if not cap.isOpened():
+            return None
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        if fps <= 0 or frames <= 0:
+            return None
+        return float(frames / fps)
+    finally:
+        cap.release()
+
+
+def _locate_peak_window(
+    video_path: str | Path,
+    window_seconds: float = 5.0,
+    stride_seconds: float = 1.0,
+) -> tuple[float, float] | None:
+    """Locate the time window with the highest average optical-flow magnitude.
+
+    The classical classifier runs at the whole-clip level (binary yes/no), so
+    it doesn't tell us *when* within the clip the event happens. This helper
+    re-scans the already-downloaded video with a downsampled optical-flow
+    pass and picks the sliding window with peak magnitude. Used to populate
+    the anomaly's (timestamp_start, timestamp_end) so the UI can seek to
+    the event instead of playing the whole clip.
+
+    Returns None on any failure so the caller can fall back to whole-clip
+    timestamps.
+    """
+    import cv2
+    import numpy as np
+
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        if not cap.isOpened():
+            return None
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        if fps <= 0:
+            return None
+
+        # Subsample at ~10 fps for speed — we only need coarse motion signal.
+        target_fps = 10.0
+        stride_frames = max(1, int(round(fps / target_fps)))
+        fb_params = dict(pyr_scale=0.5, levels=2, winsize=15, iterations=2, poly_n=5, poly_sigma=1.2, flags=0)
+
+        prev_gray = None
+        magnitudes: list[float] = []
+        idx = -1
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            idx += 1
+            if idx % stride_frames != 0:
+                continue
+            h, w = frame.shape[:2]
+            if w > 320:
+                frame = cv2.resize(frame, (320, int(h * 320 / w)), interpolation=cv2.INTER_AREA)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if prev_gray is not None:
+                flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, None, **fb_params)
+                mag = float(np.mean(np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)))
+                magnitudes.append(mag)
+            prev_gray = gray
+    finally:
+        cap.release()
+
+    if len(magnitudes) < 2:
+        return None
+
+    # Each magnitude entry represents 1/target_fps seconds
+    sec_per_sample = 1.0 / target_fps
+    w_samples = max(1, int(round(window_seconds / sec_per_sample)))
+    s_samples = max(1, int(round(stride_seconds / sec_per_sample)))
+
+    n = len(magnitudes)
+    if n <= w_samples:
+        # Whole-clip is shorter than window — return full span
+        return (0.0, n * sec_per_sample)
+
+    mags = np.array(magnitudes, dtype=np.float32)
+    best_start = 0
+    best_score = -1.0
+    for s in range(0, n - w_samples + 1, s_samples):
+        score = float(np.mean(mags[s : s + w_samples]))
+        if score > best_score:
+            best_score = score
+            best_start = s
+
+    start_s = best_start * sec_per_sample
+    end_s = (best_start + w_samples) * sec_per_sample
+    return (round(start_s, 2), round(end_s, 2))
+
+
+def _recalculate_overall_score(db) -> None:
+    """Recompute the OverallDriverScore from all classical per-clip scores."""
+    from api.models.db_models import ModelType, OverallDriverScore, Score
+    from scripts.scoring import ClipScoreResult, compute_overall_score
+
+    score_rows = db.query(Score).filter(Score.model_type == ModelType.CLASSICAL).all()
     if not score_rows:
         return
 
@@ -48,12 +145,11 @@ def _recalculate_overall_score(db) -> None:
         )
         for row in score_rows
     ]
-
     result = compute_overall_score(clip_scores)
 
-    # Upsert OverallDriverScore (keep only one row)
     existing = db.query(OverallDriverScore).first()
     if existing:
+        existing.model_type = ModelType.CLASSICAL
         existing.score = result.score
         existing.grade = result.grade
         existing.clips_analyzed = result.clips_analyzed
@@ -61,6 +157,7 @@ def _recalculate_overall_score(db) -> None:
         existing.calculated_at = datetime.now(timezone.utc)
     else:
         db.add(OverallDriverScore(
+            model_type=ModelType.CLASSICAL,
             score=result.score,
             grade=result.grade,
             clips_analyzed=result.clips_analyzed,
@@ -74,37 +171,89 @@ def _recalculate_overall_score(db) -> None:
     )
 
 
-def _heuristic_anomaly_type(window: dict, clip_severity: float) -> str:
-    """
-    Map a baseline anomaly window to an AnomalyType based on heuristics.
+_FEATURE_TO_TYPE = {
+    # Sudden single-frame motion peaks → rapid deceleration, i.e. hard braking.
+    "flow_max":                "hard_braking",
+    "flow_p95":                "hard_braking",
+    "flow_p90":                "hard_braking",
+    "window_max_peak":         "hard_braking",
+    "max_consecutive_spikes":  "hard_braking",
+    # Erratic steering shows up as high variance in optical-flow direction.
+    "direction_variance":      "harsh_cornering",
+    # Frequent direction flips indicate crossing / weaving between lanes.
+    "direction_change_rate":   "lane_departure",
+    # Repeated magnitude spikes / sustained elevated motion → aggressive
+    # maneuvering (abrupt lane changes, darting through traffic).
+    "n_magnitude_spikes":      "aggressive_lane_change",
+    "spike_rate":              "aggressive_lane_change",
+    "window_n_flagged":        "aggressive_lane_change",
+    "window_max_mean":         "aggressive_lane_change",
+    "window_max_std":          "aggressive_lane_change",
+    "flow_std":                "aggressive_lane_change",
+    "flow_mean":               "aggressive_lane_change",
+    "flow_p75":                "aggressive_lane_change",
+    # Blur/edge noise isn't a useful behavioural signal on its own.
+    "blur_mean":               "other",
+    "blur_min":                "other",
+    "edge_density_std":        "other",
+    "edge_density_max_change": "other",
+}
 
-    Peak magnitude and severity give a coarse signal:
-    - Very high peak + high severity → near_miss
-    - High peak → hard_braking
-    - Moderate variance → lane_departure
-    - Low peak but flagged → harsh_cornering
-    """
-    peak = window.get("peak_magnitude", 0.0)
-    sev = window.get("severity", clip_severity)
 
-    if sev >= 0.8 and peak >= 25.0:
-        return "near_miss"
-    elif peak >= 20.0:
-        return "hard_braking"
-    elif peak >= 15.0:
-        return "lane_departure"
-    elif sev >= 0.5:
-        return "harsh_cornering"
-    return "other"
+# Minimum z-score required to commit to a specific behavioural type. Below
+# this, every feature is essentially "within the training distribution" and
+# picking hard_braking / harsh_cornering / etc is just noise — the binary
+# classifier still flagged the clip, but the motion signature isn't strong
+# enough to name a category. Events like traffic violations (no motion
+# signature in the 19 features) typically land here.
+_TYPE_COMMIT_THRESHOLD = 1.0
+
+
+def _anomaly_type_from_zscores(zscores: dict) -> tuple[str, bool]:
+    """
+    Pick an AnomalyType based on which feature is most anomalous *for this clip*.
+
+    `zscores` is produced by ClassicalClassifier.predict() — each entry is the
+    feature's value after StandardScaler, i.e. a z-score relative to the
+    training distribution.
+
+    Returns (type_str, ambiguous). `ambiguous=True` means no feature crossed
+    the commit threshold, so the caller should treat the type as a best-effort
+    guess (typically "other") rather than a confident classification.
+    """
+    if not zscores:
+        return "other", True
+
+    ranked = sorted(zscores.items(), key=lambda kv: kv[1], reverse=True)
+    max_z = ranked[0][1]
+
+    # If nothing is meaningfully deviant, the motion signature is too weak
+    # to name a specific behaviour. Report "other" and flag as ambiguous so
+    # the UI can surface it honestly.
+    if max_z < _TYPE_COMMIT_THRESHOLD:
+        return "other", True
+
+    # Walk ranked features until we find one that maps to a real behaviour
+    # (skip blur/edge_density which map to "other"). Only consider features
+    # whose z-score is still above the commit threshold.
+    for name, z in ranked:
+        if z < _TYPE_COMMIT_THRESHOLD:
+            break
+        atype = _FEATURE_TO_TYPE.get(name, "other")
+        if atype != "other":
+            return atype, False
+
+    return "other", True
 
 
 @celery_app.task(name="api.tasks.video_tasks.process_clip", bind=True, max_retries=3)
 def process_clip(self, clip_id: str) -> dict:
     """
-    Full async pipeline for a single clip.
+    Async pipeline for a single clip — classical ML only.
 
-    Downloads the front video, runs the baseline detector, scores the clip,
-    generates AI explanations, and persists everything to the DB.
+    Downloads the front video, extracts features, runs the classical
+    classifier, scores the clip, generates an AI explanation if flagged,
+    and persists the results.
     """
     from api.database import SessionLocal
     from api.models.db_models import (
@@ -115,7 +264,8 @@ def process_clip(self, clip_id: str) -> dict:
         ProcessingStatus,
         Score,
     )
-    from scripts.models.baseline import OpticalFlowBaseline
+    from scripts.build_features import extract_features, save_features
+    from scripts.models.classical import ClassicalAnomalyClassifier
     from scripts.scoring import AnomalyInput
     from scripts.scoring import AnomalyType as ScoringAnomalyType
     from scripts.scoring import score_clip as compute_score
@@ -133,88 +283,118 @@ def process_clip(self, clip_id: str) -> dict:
         clip.processing_status = ProcessingStatus.PROCESSING
         db.commit()
 
-        # ── 1. Download front video ───────────────────────────────────────
+        # 1. Download
         from api.storage.r2_client import R2Client
         r2 = R2Client()
         tmp_path = r2.download_to_temp(clip.r2_key_front)
         logger.info("[%s] Downloaded to %s", clip.filename_prefix, tmp_path)
 
-        # ── 2. Run baseline detector ──────────────────────────────────────
-        detector = OpticalFlowBaseline()
-        result = detector.predict(tmp_path)
+        # Backfill clip duration if we've never probed it. Needed so the UI
+        # can display real timestamps (anomaly timestamp_end uses this value)
+        # and the library's duration column stops showing "—".
+        if clip.duration_seconds is None:
+            probed = _probe_duration_seconds(tmp_path)
+            if probed is not None:
+                clip.duration_seconds = probed
+                db.commit()
+
+        # 2. Feature extraction (cache by clip_id)
+        cached = Path(f"data/processed/{clip_id}_features.npz")
+        if not cached.exists():
+            features = extract_features(tmp_path)
+            save_features(clip_id, features)
+
+        # 3. Classical classifier
+        clf = ClassicalAnomalyClassifier()
+        result = clf.predict(clip_id)
         logger.info(
-            "[%s] Baseline: anomaly=%s severity=%.3f windows=%d",
-            clip.filename_prefix, result.is_anomaly,
-            result.severity, len(result.anomaly_windows),
+            "[%s] Classical: anomaly=%s prob=%.3f",
+            clip.filename_prefix, result.is_anomaly, result.anomaly_probability,
         )
 
-        # ── 3. Map windows → DB Anomaly rows ──────────────────────────────
-        anomaly_inputs: list[AnomalyInput] = []
-        anomaly_db_rows: list[Anomaly] = []
+        # Wipe prior rows for this clip across all model types so a reprocess
+        # leaves only the current single-model output visible.
+        for mt in (ModelType.BASELINE, ModelType.CLASSICAL, ModelType.DEEP_LEARNING):
+            db.query(Anomaly).filter(
+                Anomaly.clip_id == clip.id, Anomaly.model_type == mt
+            ).delete()
+            db.query(Score).filter(
+                Score.clip_id == clip.id, Score.model_type == mt
+            ).delete()
 
-        if result.is_anomaly and result.anomaly_windows:
-            for w in result.anomaly_windows:
-                atype_str = _heuristic_anomaly_type(w, result.severity)
-                try:
-                    atype = AnomalyType(atype_str)
-                    scoring_atype = ScoringAnomalyType(atype_str)
-                except ValueError:
-                    atype = AnomalyType.OTHER
-                    scoring_atype = ScoringAnomalyType.OTHER
+        # 4. Build anomaly row (if flagged) + score
+        anomaly_rows: list[Anomaly] = []
+        score_inputs: list[AnomalyInput] = []
 
-                win_severity = float(w.get("severity", result.severity))
-                anomaly_inputs.append(AnomalyInput(scoring_atype, win_severity))
-
-                anomaly_db_rows.append(Anomaly(
-                    clip_id=clip.id,
-                    model_type=ModelType.BASELINE,
-                    anomaly_type=atype,
-                    severity=win_severity,
-                    confidence=min(win_severity + 0.1, 1.0),
-                    timestamp_start=float(w.get("start_second", 0.0)),
-                    timestamp_end=float(w.get("end_second", 0.0)),
-                    score_impact=0.0,   # filled after scoring
-                    detection_metadata={
-                        "peak_magnitude": w.get("peak_magnitude"),
-                        "total_frames": result.total_frames,
-                        "fps": result.fps,
-                    },
-                ))
-
-        # ── 4. Score the clip ─────────────────────────────────────────────
-        score_result = compute_score(clip_id, anomaly_inputs)
-
-        # Back-fill score_impact per anomaly type
-        type_impacts = dict(score_result.deduction_breakdown)
-        type_counts: dict[str, int] = {}
-        for row in anomaly_db_rows:
-            k = row.anomaly_type.value
-            type_counts[k] = type_counts.get(k, 0) + 1
-
-        for row in anomaly_db_rows:
-            k = row.anomaly_type.value
-            impact = type_impacts.get(k, 0.0)
-            count = type_counts.get(k, 1)
-            row.score_impact = round(impact / count, 2)
-
-        # ── 5. Generate AI explanations ───────────────────────────────────
-        if anomaly_db_rows:
-            explainer = AnomalyExplainer()
-            anomaly_dicts = [
-                {
-                    "anomaly_id": str(uuid.uuid4()),
-                    "anomaly_type": row.anomaly_type.value,
-                    "severity": row.severity,
-                    "score_impact": row.score_impact,
-                    "detected_objects": [],
-                    "timestamp_start": row.timestamp_start,
-                    "timestamp_end": row.timestamp_end,
-                }
-                for row in anomaly_db_rows
-            ]
+        if result.is_anomaly:
+            type_str, ambiguous_type = _anomaly_type_from_zscores(result.feature_zscores)
             try:
+                atype = AnomalyType(type_str)
+                scoring_atype = ScoringAnomalyType(type_str)
+            except ValueError:
+                atype = AnomalyType.OTHER
+                scoring_atype = ScoringAnomalyType.OTHER
+                ambiguous_type = True
+
+            top_zscores = dict(
+                sorted(result.feature_zscores.items(),
+                       key=lambda x: x[1], reverse=True)[:5]
+            )
+
+            # Localize the event within the clip so the UI can seek to it,
+            # rather than marking the whole clip.
+            peak = _locate_peak_window(tmp_path)
+            if peak is None:
+                ts_start, ts_end = 0.0, float(clip.duration_seconds or 0.0)
+            else:
+                ts_start, ts_end = peak
+
+            score_inputs.append(AnomalyInput(scoring_atype, result.anomaly_probability))
+            anomaly_rows.append(Anomaly(
+                clip_id=clip.id,
+                model_type=ModelType.CLASSICAL,
+                anomaly_type=atype,
+                severity=result.anomaly_probability,
+                confidence=result.anomaly_probability,
+                timestamp_start=ts_start,
+                timestamp_end=ts_end,
+                score_impact=0.0,
+                detection_metadata={
+                    "top_deviant_features": {k: round(v, 3) for k, v in top_zscores.items()},
+                    "top_global_importances": dict(
+                        sorted(result.feature_importances.items(),
+                               key=lambda x: x[1], reverse=True)[:5]
+                    ),
+                    "peak_window_seconds": [ts_start, ts_end],
+                    "ambiguous_type": ambiguous_type,
+                    "type_commit_threshold": _TYPE_COMMIT_THRESHOLD,
+                },
+            ))
+
+        score_result = compute_score(clip_id, score_inputs)
+
+        # Attach per-anomaly deduction for UI display
+        for row in anomaly_rows:
+            row.score_impact = round(score_result.deduction_breakdown.get(row.anomaly_type.value, 0.0), 2)
+
+        # 5. AI explanation (only if flagged)
+        if anomaly_rows:
+            try:
+                explainer = AnomalyExplainer()
+                anomaly_dicts = [
+                    {
+                        "anomaly_id": str(uuid.uuid4()),
+                        "anomaly_type": row.anomaly_type.value,
+                        "severity": row.severity,
+                        "score_impact": row.score_impact,
+                        "detected_objects": [],
+                        "timestamp_start": row.timestamp_start,
+                        "timestamp_end": row.timestamp_end,
+                    }
+                    for row in anomaly_rows
+                ]
                 explanations = explainer.explain_batch(anomaly_dicts)
-                for row, exp in zip(anomaly_db_rows, explanations):
+                for row, exp in zip(anomaly_rows, explanations):
                     row.ai_explanation = (
                         f"{exp.explanation}\n\n"
                         f"Recommendation: {exp.recommendation}\n\n"
@@ -223,34 +403,23 @@ def process_clip(self, clip_id: str) -> dict:
             except Exception as exc:
                 logger.warning("[%s] AI explanation failed: %s", clip.filename_prefix, exc)
 
-        # ── 6. Persist to DB ──────────────────────────────────────────────
-        # Remove old baseline results for this clip to avoid duplicates
-        db.query(Anomaly).filter(
-            Anomaly.clip_id == clip.id, Anomaly.model_type == ModelType.BASELINE
-        ).delete()
-        db.query(Score).filter(
-            Score.clip_id == clip.id, Score.model_type == ModelType.BASELINE
-        ).delete()
-
-        for row in anomaly_db_rows:
+        # 6. Persist
+        for row in anomaly_rows:
             db.add(row)
-
-        score_row = Score(
+        db.add(Score(
             clip_id=clip.id,
-            model_type=ModelType.BASELINE,
+            model_type=ModelType.CLASSICAL,
             score=score_result.score,
             grade=score_result.grade,
             anomaly_count=score_result.anomaly_count,
-        )
-        db.add(score_row)
+        ))
 
-        # ── 7. Update clip status ─────────────────────────────────────────
         clip.processing_status = ProcessingStatus.DONE
         clip.processed_at = datetime.now(timezone.utc)
         clip.processing_error = None
         db.commit()
 
-        # ── 8. Recalculate overall driver score ───────────────────────────
+        # 7. Overall score
         try:
             _recalculate_overall_score(db)
         except Exception as exc:
@@ -259,13 +428,13 @@ def process_clip(self, clip_id: str) -> dict:
         logger.info(
             "[%s] Done — score=%.1f grade=%s anomalies=%d",
             clip.filename_prefix, score_result.score,
-            score_result.grade, len(anomaly_db_rows),
+            score_result.grade, len(anomaly_rows),
         )
         return {
             "clip_id": clip_id,
             "score": score_result.score,
             "grade": score_result.grade,
-            "anomaly_count": len(anomaly_db_rows),
+            "anomaly_count": len(anomaly_rows),
         }
 
     except Exception as exc:

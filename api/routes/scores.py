@@ -1,10 +1,13 @@
 """
 Score endpoints.
 
-GET /scores/overall        — current overall driver score + grade
-GET /scores/history        — per-clip score history for trend charts
-GET /scores/dashboard      — all dashboard data in one call
-POST /scores/recalculate   — recompute overall score from DB clip scores
+GET  /scores/overall        — current overall driver score + grade
+GET  /scores/history        — per-clip score history for trend charts
+GET  /scores/dashboard      — all dashboard data in one call
+POST /scores/recalculate    — recompute overall score from DB clip scores
+
+The production pipeline runs the classical model only; all endpoints return
+classical-derived scores and anomaly counts.
 """
 
 from fastapi import APIRouter, Depends, Query
@@ -23,32 +26,17 @@ from api.schemas import (
 
 router = APIRouter(prefix="/scores", tags=["scores"])
 
-_DEFAULT_MODEL = ModelType.BASELINE
+_MODEL = ModelType.CLASSICAL
 
 
 @router.get("/overall", response_model=OverallScoreResponse)
-def get_overall_score(
-    model_type: str = Query("baseline"),
-    db: Session = Depends(get_db),
-) -> OverallScoreResponse:
-    """
-    Return the most recently computed overall driver score.
-
-    Uses the latest OverallDriverScore row for the requested model_type.
-    If none exists, computes on the fly from per-clip scores.
-    """
-    try:
-        mt = ModelType(model_type)
-    except ValueError:
-        mt = _DEFAULT_MODEL
-
+def get_overall_score(db: Session = Depends(get_db)) -> OverallScoreResponse:
+    """Return the most recently computed overall driver score."""
     row = (
         db.query(OverallDriverScore)
-        .filter(OverallDriverScore.model_type == mt)
         .order_by(OverallDriverScore.calculated_at.desc())
         .first()
     )
-
     if row:
         return OverallScoreResponse(
             score=row.score,
@@ -57,34 +45,23 @@ def get_overall_score(
             breakdown=row.breakdown or {},
             calculated_at=row.calculated_at,
         )
-
-    # No cached row — compute from per-clip scores
-    return _compute_and_cache_overall(mt, db)
+    return _compute_and_cache_overall(db)
 
 
 @router.get("/history", response_model=ScoreHistoryResponse)
 def get_score_history(
-    model_type: str = Query("baseline"),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> ScoreHistoryResponse:
-    """
-    Return per-clip score history ordered chronologically (for trend charts).
-    """
-    try:
-        mt = ModelType(model_type)
-    except ValueError:
-        mt = _DEFAULT_MODEL
-
+    """Per-clip score history ordered chronologically (for trend charts)."""
     rows = (
         db.query(Score, Clip)
         .join(Clip, Score.clip_id == Clip.id)
-        .filter(Score.model_type == mt)
+        .filter(Score.model_type == _MODEL)
         .order_by(Clip.recorded_at.asc().nullslast(), Score.calculated_at.asc())
         .limit(limit)
         .all()
     )
-
     history = [
         ClipScoreHistory(
             clip_id=score.clip_id,
@@ -102,33 +79,20 @@ def get_score_history(
 
 @router.get("/dashboard", response_model=DashboardResponse)
 def get_dashboard(
-    model_type: str = Query("baseline"),
     trend_limit: int = Query(30, ge=5, le=100),
     db: Session = Depends(get_db),
 ) -> DashboardResponse:
-    """
-    Return all data needed for the driver dashboard in a single request.
+    """All data needed for the driver dashboard in a single request."""
+    overall = get_overall_score(db=db)
 
-    Includes: overall score, anomaly breakdown by type, and score trend.
-    """
-    try:
-        mt = ModelType(model_type)
-    except ValueError:
-        mt = _DEFAULT_MODEL
-
-    overall = get_overall_score(model_type=model_type, db=db)
-
-    # Anomaly count in last 30 days
-    recent_count = db.query(Anomaly).filter(Anomaly.model_type == mt).count()
-
-    # Breakdown by anomaly type
+    recent_count = db.query(Anomaly).filter(Anomaly.model_type == _MODEL).count()
     breakdown_rows = (
         db.query(
             Anomaly.anomaly_type,
             func.count(Anomaly.id).label("cnt"),
             func.sum(Anomaly.score_impact).label("total_impact"),
         )
-        .filter(Anomaly.model_type == mt)
+        .filter(Anomaly.model_type == _MODEL)
         .group_by(Anomaly.anomaly_type)
         .all()
     )
@@ -141,7 +105,7 @@ def get_dashboard(
         for r in breakdown_rows
     ]
 
-    trend = get_score_history(model_type=model_type, limit=trend_limit, db=db)
+    trend = get_score_history(limit=trend_limit, db=db)
 
     return DashboardResponse(
         overall_score=overall.score,
@@ -154,32 +118,24 @@ def get_dashboard(
 
 
 @router.post("/recalculate", response_model=OverallScoreResponse)
-def recalculate_overall(
-    model_type: str = Query("baseline"),
-    db: Session = Depends(get_db),
-) -> OverallScoreResponse:
-    """Force recompute the overall score from all per-clip scores in the DB."""
-    try:
-        mt = ModelType(model_type)
-    except ValueError:
-        mt = _DEFAULT_MODEL
-    return _compute_and_cache_overall(mt, db)
+def recalculate_overall(db: Session = Depends(get_db)) -> OverallScoreResponse:
+    """Force recompute the overall score from all classical per-clip scores."""
+    return _compute_and_cache_overall(db)
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
-def _compute_and_cache_overall(mt: ModelType, db: Session) -> OverallScoreResponse:
-    """Compute overall score from clip scores and persist to DB."""
+def _compute_and_cache_overall(db: Session) -> OverallScoreResponse:
+    """Compute overall score from classical clip scores and persist."""
     from scripts.scoring import (
         ClipScoreResult,
-        assign_grade,
         compute_overall_score,
     )
 
     score_rows = (
         db.query(Score, Clip)
         .join(Clip, Score.clip_id == Clip.id)
-        .filter(Score.model_type == mt)
+        .filter(Score.model_type == _MODEL)
         .order_by(Clip.recorded_at.asc().nullslast(), Score.calculated_at.asc())
         .all()
     )
@@ -198,12 +154,10 @@ def _compute_and_cache_overall(mt: ModelType, db: Session) -> OverallScoreRespon
         )
         for score, clip in score_rows
     ]
-
     result = compute_overall_score(clip_scores)
 
-    # Persist
     overall_row = OverallDriverScore(
-        model_type=mt,
+        model_type=_MODEL,
         score=result.score,
         grade=result.grade,
         clips_analyzed=result.clips_analyzed,

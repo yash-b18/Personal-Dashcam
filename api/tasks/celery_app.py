@@ -17,6 +17,7 @@ def create_celery_app() -> Celery:
         "dashcamiq",
         broker=settings.redis_url,
         backend=settings.redis_url,
+        include=["api.tasks.video_tasks"],
     )
     app.config_from_object(
         {
