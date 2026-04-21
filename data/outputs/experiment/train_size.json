@@ -1,0 +1,295 @@
+{
+  "fractions": [
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "n_test": 126,
+  "n_test_positive": 3,
+  "runs": [
+    {
+      "f1": 0.0,
+      "auc": 0.4701897018970189,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 50,
+      "n_train_pos": 1,
+      "fraction": 0.1,
+      "seed": 0,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.7845528455284553,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 50,
+      "n_train_pos": 1,
+      "fraction": 0.1,
+      "seed": 1,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6490514905149051,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 50,
+      "n_train_pos": 1,
+      "fraction": 0.1,
+      "seed": 2,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6585365853658536,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 50,
+      "n_train_pos": 1,
+      "fraction": 0.1,
+      "seed": 3,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.602981029810298,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 50,
+      "n_train_pos": 1,
+      "fraction": 0.1,
+      "seed": 4,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.7452574525745258,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 125,
+      "n_train_pos": 3,
+      "fraction": 0.25,
+      "seed": 0,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.8048780487804879,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 125,
+      "n_train_pos": 3,
+      "fraction": 0.25,
+      "seed": 1,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.7425474254742547,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 125,
+      "n_train_pos": 3,
+      "fraction": 0.25,
+      "seed": 2,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.9403794037940378,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 125,
+      "n_train_pos": 3,
+      "fraction": 0.25,
+      "seed": 3,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.5718157181571816,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 125,
+      "n_train_pos": 3,
+      "fraction": 0.25,
+      "seed": 4,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.8888888888888888,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 250,
+      "n_train_pos": 6,
+      "fraction": 0.5,
+      "seed": 0,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.7073170731707317,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 250,
+      "n_train_pos": 6,
+      "fraction": 0.5,
+      "seed": 1,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.7181571815718157,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 250,
+      "n_train_pos": 6,
+      "fraction": 0.5,
+      "seed": 2,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.5,
+      "auc": 0.8753387533875339,
+      "precision": 1.0,
+      "recall": 0.3333333333333333,
+      "n_train": 250,
+      "n_train_pos": 6,
+      "fraction": 0.5,
+      "seed": 3,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6124661246612466,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 250,
+      "n_train_pos": 6,
+      "fraction": 0.5,
+      "seed": 4,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.4,
+      "auc": 0.8157181571815718,
+      "precision": 0.5,
+      "recall": 0.3333333333333333,
+      "n_train": 375,
+      "n_train_pos": 10,
+      "fraction": 0.75,
+      "seed": 0,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.4,
+      "auc": 0.5663956639566395,
+      "precision": 0.5,
+      "recall": 0.3333333333333333,
+      "n_train": 375,
+      "n_train_pos": 10,
+      "fraction": 0.75,
+      "seed": 1,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6639566395663956,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 375,
+      "n_train_pos": 10,
+      "fraction": 0.75,
+      "seed": 2,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6937669376693767,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 375,
+      "n_train_pos": 10,
+      "fraction": 0.75,
+      "seed": 3,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6639566395663956,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 375,
+      "n_train_pos": 10,
+      "fraction": 0.75,
+      "seed": 4,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6747967479674797,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 500,
+      "n_train_pos": 13,
+      "fraction": 1.0,
+      "seed": 0,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.5663956639566395,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 500,
+      "n_train_pos": 13,
+      "fraction": 1.0,
+      "seed": 1,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6124661246612465,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 500,
+      "n_train_pos": 13,
+      "fraction": 1.0,
+      "seed": 2,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.5826558265582655,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 500,
+      "n_train_pos": 13,
+      "fraction": 1.0,
+      "seed": 3,
+      "model": "classical_xgb"
+    },
+    {
+      "f1": 0.0,
+      "auc": 0.6666666666666666,
+      "precision": 0.0,
+      "recall": 0.0,
+      "n_train": 500,
+      "n_train_pos": 13,
+      "fraction": 1.0,
+      "seed": 4,
+      "model": "classical_xgb"
+    }
+  ]
+}
