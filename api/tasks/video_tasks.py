@@ -200,29 +200,50 @@ _FEATURE_TO_TYPE = {
 }
 
 
-def _anomaly_type_from_zscores(zscores: dict) -> str:
+# Minimum z-score required to commit to a specific behavioural type. Below
+# this, every feature is essentially "within the training distribution" and
+# picking hard_braking / harsh_cornering / etc is just noise — the binary
+# classifier still flagged the clip, but the motion signature isn't strong
+# enough to name a category. Events like traffic violations (no motion
+# signature in the 19 features) typically land here.
+_TYPE_COMMIT_THRESHOLD = 1.0
+
+
+def _anomaly_type_from_zscores(zscores: dict) -> tuple[str, bool]:
     """
     Pick an AnomalyType based on which feature is most anomalous *for this clip*.
 
     `zscores` is produced by ClassicalClassifier.predict() — each entry is the
     feature's value after StandardScaler, i.e. a z-score relative to the
-    training distribution. The feature with the largest positive z-score is
-    the one that makes this specific clip look unusual; mapping that feature
-    to a behavioural category gives a per-clip type (instead of every flagged
-    clip getting the same constant from global feature importance).
+    training distribution.
+
+    Returns (type_str, ambiguous). `ambiguous=True` means no feature crossed
+    the commit threshold, so the caller should treat the type as a best-effort
+    guess (typically "other") rather than a confident classification.
     """
     if not zscores:
-        return "other"
-    # Rank by z-score descending and walk until we find a feature that maps
-    # to a specific behaviour. If the most-deviant feature is noise-ish
-    # (blur / edge_density), the next-most-deviant usually carries a real
-    # behavioural signal.
+        return "other", True
+
     ranked = sorted(zscores.items(), key=lambda kv: kv[1], reverse=True)
-    for name, _z in ranked:
+    max_z = ranked[0][1]
+
+    # If nothing is meaningfully deviant, the motion signature is too weak
+    # to name a specific behaviour. Report "other" and flag as ambiguous so
+    # the UI can surface it honestly.
+    if max_z < _TYPE_COMMIT_THRESHOLD:
+        return "other", True
+
+    # Walk ranked features until we find one that maps to a real behaviour
+    # (skip blur/edge_density which map to "other"). Only consider features
+    # whose z-score is still above the commit threshold.
+    for name, z in ranked:
+        if z < _TYPE_COMMIT_THRESHOLD:
+            break
         atype = _FEATURE_TO_TYPE.get(name, "other")
         if atype != "other":
-            return atype
-    return "other"
+            return atype, False
+
+    return "other", True
 
 
 @celery_app.task(name="api.tasks.video_tasks.process_clip", bind=True, max_retries=3)
@@ -306,13 +327,14 @@ def process_clip(self, clip_id: str) -> dict:
         score_inputs: list[AnomalyInput] = []
 
         if result.is_anomaly:
-            type_str = _anomaly_type_from_zscores(result.feature_zscores)
+            type_str, ambiguous_type = _anomaly_type_from_zscores(result.feature_zscores)
             try:
                 atype = AnomalyType(type_str)
                 scoring_atype = ScoringAnomalyType(type_str)
             except ValueError:
                 atype = AnomalyType.OTHER
                 scoring_atype = ScoringAnomalyType.OTHER
+                ambiguous_type = True
 
             top_zscores = dict(
                 sorted(result.feature_zscores.items(),
@@ -344,6 +366,8 @@ def process_clip(self, clip_id: str) -> dict:
                                key=lambda x: x[1], reverse=True)[:5]
                     ),
                     "peak_window_seconds": [ts_start, ts_end],
+                    "ambiguous_type": ambiguous_type,
+                    "type_commit_threshold": _TYPE_COMMIT_THRESHOLD,
                 },
             ))
 
