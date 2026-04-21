@@ -4,6 +4,8 @@
 
 DashcamIQ analyzes paired front and rear dashcam footage using computer vision, classical ML, and deep learning to detect driving anomalies and produce a quantified driver safety score — with AI-generated explanations for every incident detected.
 
+> **Technical report:** [`report.docx`](report.docx) — full NeurIPS-style write-up covering problem statement, data, related work, evaluation strategy, three-model comparison, hyperparameter tuning, headline results, training-size sensitivity experiment, error analysis, commercial viability, and ethics statement.
+
 ---
 
 ## Table of Contents
@@ -354,34 +356,28 @@ Key parameters (tunable in `scripts/models/deep_learning.py`):
 - LSTM weights saved to `models/dl_lstm.pt`, Transformer to `models/dl_transformer.pt`
 - Training history saved to `data/outputs/dl_eval.json` (LSTM) and `data/outputs/dl_eval_transformer.json`
 
-### Experiment — Training Set Size Sensitivity Analysis (`scripts/experiment.py`)
-Answers: *"How many labeled clips do we need before each model becomes reliable?"*
+### Experiment — Training Set Size Sensitivity (`scripts/experiments/train_size_sensitivity.py`)
+Answers: *"Were 626 labeled clips enough for the deployed classical model, or would more labeling effort have paid off?"*
 
-- Trains both Classical (XGBoost) and Deep Learning (LSTM) at **10%, 25%, 50%, 75%, and 100%** of available labeled data
-- Each fraction repeated N times (default 3) with different seeds for error bars
-- Fixed held-out test set (20% of labeled data) used across all fractions
-- Metrics: F1, AUC-ROC, Precision, Recall — mean ± std per fraction
-- Outputs a data-driven recommendation: minimum fraction to reach F1 ≥ 70%
+- Trains the deployed Classical (XGBoost) classifier at **10%, 25%, 50%, 75%, 100%** of the locked train split
+- Subsampling is stratified on `is_anomaly`; **5 seeds per fraction** for mean ± std error bars
+- Fixed held-out 126-clip test set (`data/splits.json`) is reused across every fraction
+- Primary metric: **ROC-AUC** (only 3 positives in the test set makes F1 effectively ternary)
+- Finding: AUC is flat at ~0.60–0.75 across all fractions and seed variance narrows with more data — the curve plateaus at mediocre performance, so additional negative examples won't lift it; better features or more positives would
 
 ```bash
-# Run full experiment (both models, 3 repeats per fraction)
-python scripts/experiment.py
+# Classical curve (completes in under a minute on CPU)
+python scripts/experiments/train_size_sensitivity.py
 
-# Classical only (faster, no GPU needed)
-python scripts/experiment.py --model classical
-
-# Fewer repeats for quick iteration
-python scripts/experiment.py --n-repeats 1
-
-# Custom features directory
-python scripts/experiment.py --features-dir data/processed --output-dir data/outputs/experiment
+# Optional LSTM curve (requires *_dl_features.npz sequences; slow on CPU)
+python scripts/experiments/train_size_sensitivity.py --include-lstm
 ```
 
 Outputs saved to `data/outputs/experiment/`:
-- `experiment_results.json` — all metrics with mean ± std per fraction
-- `experiment_f1.png` — F1 learning curves with error bands
-- `experiment_auc.png` — AUC-ROC learning curves with error bands
-- `experiment_combined.png` — side-by-side F1 + AUC panel plot
+- `train_size.json` — raw per-run metrics (`fraction`, `seed`, `f1`, `auc`, `precision`, `recall`, `n_train`, `n_train_pos`, `model`)
+- `train_size.png` — F1 and AUC vs train fraction, mean ± std error bars
+
+See `report.docx` (Section 9) for the full experimental write-up, interpretation, and recommendations.
 
 ---
 
@@ -473,7 +469,7 @@ Triggered via `POST /videos/{id}/process`:
 | `feature/classical-ml` | ✅ | 19-feature extraction pipeline + XGBoost + Random Forest classifier |
 | `feature/deep-learning` | ✅ | YOLOv8 object detection + LSTM temporal classifier |
 | `feature/ml-training` | ✅ | LSTM + Transformer training with focal loss, attention pooling, oversampling |
-| `feature/experiment` | ✅ | Training set size sensitivity analysis |
+| `feature/train-size-experiment` | ✅ | Training-set-size sensitivity experiment (classical XGBoost) + technical report (`report.docx`) |
 | `feature/scoring-genai` | ✅ | Scoring engine + Claude API explanation generation |
 | `feature/api-backend` | ✅ | Full FastAPI routes, Celery tasks, video streaming |
 | `feature/frontend-core` | ✅ Merged | Next.js setup, layout, design system |
