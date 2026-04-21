@@ -96,13 +96,40 @@ def _zero_vector() -> np.ndarray:
     return np.zeros(len(yolo_feature_names()), dtype=np.float32)
 
 
-def _sample_frames_decord(video_path: Path, target_fps: float) -> list[np.ndarray]:
-    """Strided frame sampler using decord. Seeks through the file instead of
-    decoding every frame like cv2 does — ~10x faster for small target_fps."""
+_DECORD_CTX_LOGGED = False
+_DECORD_OUT_W = 640
+_DECORD_OUT_H = 384
+
+
+def _open_decord(video_path: Path):
+    """Open a decord VideoReader, preferring GPU (NVDEC) and forcing a
+    downscaled output so we're not hauling 1080p frames through Python."""
     import decord
-    # decord uses RGB by default; ultralytics expects BGR (cv2-style). Keep
-    # returning BGR for parity with the cv2 fallback and YOLO preprocessing.
-    vr = decord.VideoReader(str(video_path), ctx=decord.cpu(0))
+    global _DECORD_CTX_LOGGED
+    last_err: Exception | None = None
+    for label, ctx in (("gpu", lambda: decord.gpu(0)),
+                       ("cpu", lambda: decord.cpu(0))):
+        try:
+            vr = decord.VideoReader(
+                str(video_path), ctx=ctx(),
+                width=_DECORD_OUT_W, height=_DECORD_OUT_H,
+            )
+            if not _DECORD_CTX_LOGGED:
+                logger.info("  decord ctx=%s output=%dx%d", label,
+                            _DECORD_OUT_W, _DECORD_OUT_H)
+                _DECORD_CTX_LOGGED = True
+            return vr
+        except Exception as exc:
+            last_err = exc
+            continue
+    raise RuntimeError(f"decord failed to open {video_path}: {last_err}")
+
+
+def _sample_frames_decord(video_path: Path, target_fps: float) -> list[np.ndarray]:
+    """Strided frame sampler using decord. Forces a downscaled output so the
+    decoder emits small frames directly — much faster than native-size decode
+    followed by Python-side resize."""
+    vr = _open_decord(video_path)
     src_fps = float(vr.get_avg_fps() or 30.0)
     stride = max(1, int(round(src_fps / target_fps)))
     indices = list(range(0, len(vr), stride))
