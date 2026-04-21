@@ -27,7 +27,9 @@ from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 SPLITS_PATH = Path("data/splits.json")
@@ -39,7 +41,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--test-size", type=float, default=DEFAULT_TEST_SIZE)
     p.add_argument("--random-state", type=int, default=DEFAULT_RANDOM_STATE)
-    p.add_argument("--force", action="store_true", help="Overwrite existing splits.json")
+    p.add_argument(
+        "--force", action="store_true", help="Overwrite existing splits.json"
+    )
     return p.parse_args()
 
 
@@ -50,11 +54,7 @@ def build_splits(test_size: float, random_state: int) -> dict:
 
     db = SessionLocal()
     try:
-        rows = (
-            db.query(Clip, Label)
-            .join(Label, Clip.id == Label.clip_id)
-            .all()
-        )
+        rows = db.query(Clip, Label).join(Label, Clip.id == Label.clip_id).all()
     finally:
         db.close()
 
@@ -62,8 +62,8 @@ def build_splits(test_size: float, random_state: int) -> dict:
         raise RuntimeError("No labeled clips in DB. Label via admin UI first.")
 
     clip_ids = [str(c.id) for c, _ in rows]
-    is_anom = [int(l.is_anomaly) for _, l in rows]
-    type_lists = [l.anomaly_types or [] for _, l in rows]
+    is_anom = [int(lbl.is_anomaly) for _, lbl in rows]
+    type_lists = [lbl.anomaly_types or [] for _, lbl in rows]
 
     train_ids, test_ids, train_y, test_y = train_test_split(
         clip_ids,

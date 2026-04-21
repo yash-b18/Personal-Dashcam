@@ -8,7 +8,6 @@ import pytest
 
 from scripts.scoring import (
     MAX_DEDUCTIONS,
-    RECENCY_DECAY,
     SAME_TYPE_CAP_MULTIPLIER,
     AnomalyInput,
     AnomalyType,
@@ -21,6 +20,7 @@ from scripts.scoring import (
 
 
 # ── assign_grade ───────────────────────────────────────────────────────────────
+
 
 class TestAssignGrade:
     def test_a_at_90(self) -> None:
@@ -56,15 +56,22 @@ class TestAnomalyTypes:
     def test_all_types_present(self) -> None:
         types = {t.value for t in AnomalyType}
         expected = {
-            "hard_braking", "hard_acceleration", "near_miss",
-            "lane_departure", "traffic_violation", "tailgating",
-            "aggressive_lane_change", "harsh_cornering",
-            "distracted_driving", "other",
+            "hard_braking",
+            "hard_acceleration",
+            "near_miss",
+            "lane_departure",
+            "traffic_violation",
+            "tailgating",
+            "aggressive_lane_change",
+            "harsh_cornering",
+            "distracted_driving",
+            "other",
         }
         assert expected.issubset(types)
 
 
 # ── score_clip ─────────────────────────────────────────────────────────────────
+
 
 class TestScoreClip:
     def test_no_anomalies_returns_100(self) -> None:
@@ -123,7 +130,7 @@ class TestScoreClip:
 
     def test_severity_clamped_above_1(self) -> None:
         r_normal = score_clip("c1", [AnomalyInput(AnomalyType.HARD_BRAKING, 1.0)])
-        r_high   = score_clip("c2", [AnomalyInput(AnomalyType.HARD_BRAKING, 5.0)])
+        r_high = score_clip("c2", [AnomalyInput(AnomalyType.HARD_BRAKING, 5.0)])
         assert r_normal.score == r_high.score
 
     def test_severity_clamped_below_0(self) -> None:
@@ -138,8 +145,11 @@ class TestScoreClip:
 
 # ── compute_overall_score ──────────────────────────────────────────────────────
 
+
 class TestComputeOverallScore:
-    def _make_clip(self, clip_id: str, score: float, breakdown: dict | None = None) -> ClipScoreResult:
+    def _make_clip(
+        self, clip_id: str, score: float, breakdown: dict | None = None
+    ) -> ClipScoreResult:
         return ClipScoreResult(
             clip_id=clip_id,
             score=score,
@@ -197,9 +207,11 @@ class TestComputeOverallScore:
 
 # ── AnomalyExplainer (no real API calls) ──────────────────────────────────────
 
+
 class TestAnomalyExplainer:
     def _make_explainer(self):
         from scripts.genai import AnomalyExplainer
+
         return AnomalyExplainer(api_key="fake-key-for-testing")
 
     def test_build_prompt_contains_anomaly_type(self) -> None:
@@ -258,6 +270,7 @@ class TestAnomalyExplainer:
 
     def test_explanation_result_dataclass(self) -> None:
         from scripts.genai import ExplanationResult
+
         r = ExplanationResult(
             anomaly_id="abc",
             explanation="Something happened.",

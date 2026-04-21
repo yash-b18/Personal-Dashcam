@@ -43,24 +43,45 @@ from tqdm import tqdm
 load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.models.baseline import MAGNITUDE_THRESHOLD, WINDOW_SIZE_FRAMES, STEP_SIZE_FRAMES
+from scripts.models.baseline import (  # noqa: E402
+    MAGNITUDE_THRESHOLD,
+    STEP_SIZE_FRAMES,
+    WINDOW_SIZE_FRAMES,
+)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 PROCESSED_DIR = Path("data/processed")
-_FB_PARAMS = dict(pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
+_FB_PARAMS = dict(
+    pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5, poly_sigma=1.2, flags=0
+)
 
 
 def feature_names() -> list[str]:
     """Return the ordered list of feature names produced by extract_features()."""
     return [
-        "flow_mean", "flow_std", "flow_max", "flow_p75", "flow_p90", "flow_p95",
-        "window_max_mean", "window_max_peak", "window_max_std", "window_n_flagged",
-        "direction_variance", "direction_change_rate",
-        "blur_mean", "blur_min",
-        "edge_density_std", "edge_density_max_change",
-        "n_magnitude_spikes", "spike_rate", "max_consecutive_spikes",
+        "flow_mean",
+        "flow_std",
+        "flow_max",
+        "flow_p75",
+        "flow_p90",
+        "flow_p95",
+        "window_max_mean",
+        "window_max_peak",
+        "window_max_std",
+        "window_n_flagged",
+        "direction_variance",
+        "direction_change_rate",
+        "blur_mean",
+        "blur_min",
+        "edge_density_std",
+        "edge_density_max_change",
+        "n_magnitude_spikes",
+        "spike_rate",
+        "max_consecutive_spikes",
     ]
 
 
@@ -120,7 +141,9 @@ def extract_features(video_path: str | Path) -> dict[str, float]:
 
             h, w = frame.shape[:2]
             if w > 640:
-                frame = cv2.resize(frame, (640, int(h * 640 / w)), interpolation=cv2.INTER_AREA)
+                frame = cv2.resize(
+                    frame, (640, int(h * 640 / w)), interpolation=cv2.INTER_AREA
+                )
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             blur_scores.append(float(cv2.Laplacian(gray, cv2.CV_64F).var()))
@@ -154,11 +177,11 @@ def extract_features(video_path: str | Path) -> dict[str, float]:
     # Optical flow magnitude stats
     flow_feats = {
         "flow_mean": float(np.mean(mags)),
-        "flow_std":  float(np.std(mags)),
-        "flow_max":  float(np.max(mags)),
-        "flow_p75":  float(np.percentile(mags, 75)),
-        "flow_p90":  float(np.percentile(mags, 90)),
-        "flow_p95":  float(np.percentile(mags, 95)),
+        "flow_std": float(np.std(mags)),
+        "flow_max": float(np.max(mags)),
+        "flow_p75": float(np.percentile(mags, 75)),
+        "flow_p90": float(np.percentile(mags, 90)),
+        "flow_p95": float(np.percentile(mags, 95)),
     }
 
     # Window-level stats
@@ -173,16 +196,16 @@ def extract_features(video_path: str | Path) -> dict[str, float]:
             n_flagged += 1
 
     window_feats = {
-        "window_max_mean":  max(w_means, default=0.0),
-        "window_max_peak":  max(w_peaks, default=0.0),
-        "window_max_std":   max(w_stds,  default=0.0),
+        "window_max_mean": max(w_means, default=0.0),
+        "window_max_peak": max(w_peaks, default=0.0),
+        "window_max_std": max(w_stds, default=0.0),
         "window_n_flagged": float(n_flagged),
     }
 
     # Direction stats
     dirs = np.array(directions, dtype=np.float32)
     dir_feats = {
-        "direction_variance":    float(np.var(dirs)) if len(dirs) > 1 else 0.0,
+        "direction_variance": float(np.var(dirs)) if len(dirs) > 1 else 0.0,
         "direction_change_rate": direction_changes / max(n, 1),
     }
 
@@ -194,7 +217,7 @@ def extract_features(video_path: str | Path) -> dict[str, float]:
     ea = np.array(edge_counts, dtype=np.float32)
     diffs = np.abs(np.diff(ea)) if len(ea) > 1 else np.array([0.0])
     edge_feats = {
-        "edge_density_std":        float(np.std(ea)),
+        "edge_density_std": float(np.std(ea)),
         "edge_density_max_change": float(np.max(diffs)),
     }
 
@@ -202,15 +225,24 @@ def extract_features(video_path: str | Path) -> dict[str, float]:
     spike_mask = mags > MAGNITUDE_THRESHOLD
     n_spikes = int(np.sum(spike_mask))
     spike_feats = {
-        "n_magnitude_spikes":    float(n_spikes),
-        "spike_rate":            n_spikes / max(n, 1),
+        "n_magnitude_spikes": float(n_spikes),
+        "spike_rate": n_spikes / max(n, 1),
         "max_consecutive_spikes": float(_max_consecutive_true(spike_mask)),
     }
 
-    return {**flow_feats, **window_feats, **dir_feats, **blur_feats, **edge_feats, **spike_feats}
+    return {
+        **flow_feats,
+        **window_feats,
+        **dir_feats,
+        **blur_feats,
+        **edge_feats,
+        **spike_feats,
+    }
 
 
-def save_features(clip_id: str, features: dict[str, float], output_dir: Path = PROCESSED_DIR) -> Path:
+def save_features(
+    clip_id: str, features: dict[str, float], output_dir: Path = PROCESSED_DIR
+) -> Path:
     """
     Persist extracted features to a compressed .npz archive.
 
@@ -230,7 +262,9 @@ def save_features(clip_id: str, features: dict[str, float], output_dir: Path = P
     return out_path
 
 
-def load_features(clip_id: str, features_dir: Path = PROCESSED_DIR) -> np.ndarray | None:
+def load_features(
+    clip_id: str, features_dir: Path = PROCESSED_DIR
+) -> np.ndarray | None:
     """
     Load a pre-extracted feature vector from disk.
 
@@ -253,7 +287,9 @@ def parse_args() -> argparse.Namespace:
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--clip-id", type=str, help="Extract for a single clip UUID")
     target.add_argument("--all", action="store_true", help="Extract for all clips")
-    parser.add_argument("--force", action="store_true", help="Re-extract even if .npz exists")
+    parser.add_argument(
+        "--force", action="store_true", help="Re-extract even if .npz exists"
+    )
     return parser.parse_args()
 
 
@@ -272,7 +308,11 @@ def main() -> None:
         if args.clip_id:
             clips = db.query(Clip).filter(Clip.id == args.clip_id).all()
         else:
-            clips = db.query(Clip).filter(Clip.processing_status != ProcessingStatus.FAILED).all()
+            clips = (
+                db.query(Clip)
+                .filter(Clip.processing_status != ProcessingStatus.FAILED)
+                .all()
+            )
     finally:
         db.close()
 
@@ -299,7 +339,7 @@ def main() -> None:
             if tmp_path and Path(tmp_path).exists():
                 Path(tmp_path).unlink()
 
-    print(f"\n── Feature Extraction ─────────────────")
+    print("\n── Feature Extraction ─────────────────")
     print(f"  Extracted: {extracted}")
     print(f"  Skipped:   {skipped}  (already exist)")
     print(f"  Failed:    {failed}")

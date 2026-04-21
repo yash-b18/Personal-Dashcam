@@ -33,6 +33,7 @@ from api.database import Base
 
 class ProcessingStatus(str, enum.Enum):
     """Processing pipeline state for a clip."""
+
     PENDING = "pending"
     PROCESSING = "processing"
     DONE = "done"
@@ -41,6 +42,7 @@ class ProcessingStatus(str, enum.Enum):
 
 class ModelType(str, enum.Enum):
     """Which model produced a result."""
+
     BASELINE = "baseline"
     CLASSICAL = "classical"
     DEEP_LEARNING = "deep_learning"
@@ -48,6 +50,7 @@ class ModelType(str, enum.Enum):
 
 class AnomalyType(str, enum.Enum):
     """Categories of detected driving anomalies."""
+
     HARD_BRAKING = "hard_braking"
     HARD_ACCELERATION = "hard_acceleration"
     NEAR_MISS = "near_miss"
@@ -67,6 +70,7 @@ class Clip(Base):
     Each dashcam segment is stored as two separate R2 objects (front/rear).
     A clip is the atomic unit of analysis and labeling.
     """
+
     __tablename__ = "clips"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -74,22 +78,33 @@ class Clip(Base):
     )
     r2_key_front: Mapped[str] = mapped_column(String(512), nullable=False)
     r2_key_rear: Mapped[str] = mapped_column(String(512), nullable=False)
-    filename_prefix: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    filename_prefix: Mapped[str] = mapped_column(
+        String(256), nullable=False, index=True
+    )
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     file_size_bytes_front: Mapped[int | None] = mapped_column(Integer, nullable=True)
     file_size_bytes_rear: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recorded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     processing_status: Mapped[ProcessingStatus] = mapped_column(
-        Enum(ProcessingStatus), default=ProcessingStatus.PENDING, nullable=False, index=True
+        Enum(ProcessingStatus),
+        default=ProcessingStatus.PENDING,
+        nullable=False,
+        index=True,
     )
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
-    label: Mapped["Label | None"] = relationship("Label", back_populates="clip", uselist=False)
+    label: Mapped["Label | None"] = relationship(
+        "Label", back_populates="clip", uselist=False
+    )
     anomalies: Mapped[list["Anomaly"]] = relationship("Anomaly", back_populates="clip")
     scores: Mapped[list["Score"]] = relationship("Score", back_populates="clip")
 
@@ -104,14 +119,18 @@ class Label(Base):
     One label per clip. Stores whether an anomaly was observed,
     what type(s) it was, and a free-text reason from the reviewer.
     """
+
     __tablename__ = "labels"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     clip_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clips.id", ondelete="CASCADE"),
-        nullable=False, unique=True, index=True
+        UUID(as_uuid=True),
+        ForeignKey("clips.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
     )
     is_anomaly: Mapped[bool] = mapped_column(Boolean, nullable=False)
     # JSON array of AnomalyType values
@@ -136,22 +155,33 @@ class Anomaly(Base):
     one per model type). Stores the exact timestamp window, severity,
     and the Claude-generated explanation.
     """
+
     __tablename__ = "anomalies"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     clip_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clips.id", ondelete="CASCADE"),
-        nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("clips.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    model_type: Mapped[ModelType] = mapped_column(Enum(ModelType), nullable=False, index=True)
-    anomaly_type: Mapped[AnomalyType] = mapped_column(Enum(AnomalyType), nullable=False, index=True)
-    severity: Mapped[float] = mapped_column(Float, nullable=False)       # 0.0 – 1.0
-    confidence: Mapped[float] = mapped_column(Float, nullable=False)     # 0.0 – 1.0
-    timestamp_start: Mapped[float] = mapped_column(Float, nullable=False)  # seconds into clip
+    model_type: Mapped[ModelType] = mapped_column(
+        Enum(ModelType), nullable=False, index=True
+    )
+    anomaly_type: Mapped[AnomalyType] = mapped_column(
+        Enum(AnomalyType), nullable=False, index=True
+    )
+    severity: Mapped[float] = mapped_column(Float, nullable=False)  # 0.0 – 1.0
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)  # 0.0 – 1.0
+    timestamp_start: Mapped[float] = mapped_column(
+        Float, nullable=False
+    )  # seconds into clip
     timestamp_end: Mapped[float] = mapped_column(Float, nullable=False)
-    score_impact: Mapped[float] = mapped_column(Float, nullable=False)   # points deducted
+    score_impact: Mapped[float] = mapped_column(
+        Float, nullable=False
+    )  # points deducted
     # JSON blob: detected objects, optical flow stats, etc.
     detection_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ai_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -173,18 +203,21 @@ class Score(Base):
     Three rows can exist per clip (one per ModelType). The deployed
     model's score is used in the driver dashboard.
     """
+
     __tablename__ = "scores"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     clip_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clips.id", ondelete="CASCADE"),
-        nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("clips.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     model_type: Mapped[ModelType] = mapped_column(Enum(ModelType), nullable=False)
-    score: Mapped[float] = mapped_column(Float, nullable=False)   # 0 – 100
-    grade: Mapped[str] = mapped_column(String(1), nullable=False) # A – F
+    score: Mapped[float] = mapped_column(Float, nullable=False)  # 0 – 100
+    grade: Mapped[str] = mapped_column(String(1), nullable=False)  # A – F
     anomaly_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     calculated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -204,6 +237,7 @@ class OverallDriverScore(Base):
     Recalculated each time new clips are processed. Stores a snapshot
     of the overall score, grade, and how many clips were included.
     """
+
     __tablename__ = "overall_driver_scores"
 
     id: Mapped[uuid.UUID] = mapped_column(

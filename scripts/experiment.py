@@ -39,8 +39,8 @@ logger = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 TRAIN_FRACTIONS = [0.10, 0.25, 0.50, 0.75, 1.00]
-N_REPEATS = 3           # repeats per fraction (averaged for error bars)
-TEST_SPLIT = 0.20       # held-out test fraction (constant across all experiments)
+N_REPEATS = 3  # repeats per fraction (averaged for error bars)
+TEST_SPLIT = 0.20  # held-out test fraction (constant across all experiments)
 OUTPUT_DIR = Path("data/outputs/experiment")
 
 CLASSICAL_FEATURES_DIR = Path("data/processed")
@@ -48,6 +48,7 @@ DL_FEATURES_DIR = Path("data/processed")
 
 
 # ── Classical ML experiment ────────────────────────────────────────────────────
+
 
 def run_classical_experiment(
     features_dir: Path = CLASSICAL_FEATURES_DIR,
@@ -63,11 +64,10 @@ def run_classical_experiment(
         dict mapping fraction → list of metric dicts (one per repeat).
     """
     import xgboost as xgb
-    from sklearn.metrics import f1_score, roc_auc_score, precision_score, recall_score
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import StandardScaler
 
-    from scripts.build_features import feature_names, load_features
+    from scripts.build_features import load_features
     from api.database import SessionLocal
     from api.models.db_models import Clip, Label
 
@@ -81,19 +81,21 @@ def run_classical_experiment(
         logger.error("No labeled clips found. Label clips via the admin UI first.")
         return {}
 
-    names = feature_names()
     X_all, y_all = [], []
     for clip, label in labeled:
         feat = load_features(str(clip.id), features_dir=features_dir)
         if feat is None:
-            logger.warning("No classical features for %s — skipping", clip.filename_prefix)
+            logger.warning(
+                "No classical features for %s — skipping", clip.filename_prefix
+            )
             continue
         X_all.append(feat)
         y_all.append(int(label.is_anomaly))
 
     if len(X_all) < 10:
         logger.error(
-            "Only %d clips with features — need at least 10 to run experiment.", len(X_all)
+            "Only %d clips with features — need at least 10 to run experiment.",
+            len(X_all),
         )
         return {}
 
@@ -101,12 +103,18 @@ def run_classical_experiment(
     y_all = np.array(y_all, dtype=np.int32)
     logger.info(
         "Classical experiment: %d clips total (%d anomaly, %d normal)",
-        len(y_all), y_all.sum(), (y_all == 0).sum(),
+        len(y_all),
+        y_all.sum(),
+        (y_all == 0).sum(),
     )
 
     # Fixed test set (same across all fractions and repeats)
     X_trainval, X_test, y_trainval, y_test = train_test_split(
-        X_all, y_all, test_size=TEST_SPLIT, stratify=y_all, random_state=0,
+        X_all,
+        y_all,
+        test_size=TEST_SPLIT,
+        stratify=y_all,
+        random_state=0,
     )
 
     results: dict[float, list[dict]] = {}
@@ -154,13 +162,18 @@ def run_classical_experiment(
 
             logger.info(
                 "  Classical frac=%.2f repeat=%d | n_train=%d F1=%.3f AUC=%.3f",
-                frac, repeat, len(y_tr), metrics["f1"], metrics["auc_roc"],
+                frac,
+                repeat,
+                len(y_tr),
+                metrics["f1"],
+                metrics["auc_roc"],
             )
 
     return results
 
 
 # ── Deep Learning experiment ───────────────────────────────────────────────────
+
 
 def run_dl_experiment(
     features_dir: Path = DL_FEATURES_DIR,
@@ -177,7 +190,6 @@ def run_dl_experiment(
         dict mapping fraction → list of metric dicts (one per repeat).
     """
     import torch
-    from sklearn.metrics import f1_score, roc_auc_score, precision_score, recall_score
     from sklearn.model_selection import train_test_split
     from torch.utils.data import DataLoader, TensorDataset
     import torch.nn as nn
@@ -208,22 +220,25 @@ def run_dl_experiment(
         clip_y.append(int(label.is_anomaly))
 
     if len(clip_X) < 10:
-        logger.error(
-            "Only %d clips with DL features — need at least 10.", len(clip_X)
-        )
+        logger.error("Only %d clips with DL features — need at least 10.", len(clip_X))
         return {}
 
     clip_y_arr = np.array(clip_y, dtype=np.int32)
     logger.info(
         "DL experiment: %d clips total (%d anomaly, %d normal)",
-        len(clip_y_arr), clip_y_arr.sum(), (clip_y_arr == 0).sum(),
+        len(clip_y_arr),
+        clip_y_arr.sum(),
+        (clip_y_arr == 0).sum(),
     )
 
     # Fixed clip-level split
     n_clips = len(clip_y_arr)
     clip_idx = np.arange(n_clips)
     train_val_idx, test_idx = train_test_split(
-        clip_idx, test_size=TEST_SPLIT, stratify=clip_y_arr, random_state=0,
+        clip_idx,
+        test_size=TEST_SPLIT,
+        stratify=clip_y_arr,
+        random_state=0,
     )
 
     # Expand test set into window-level arrays
@@ -252,11 +267,15 @@ def run_dl_experiment(
 
             pos = y_tr.sum()
             neg = len(y_tr) - pos
-            pos_weight = torch.tensor([neg / max(pos, 1)], dtype=torch.float32).to(device)
+            pos_weight = torch.tensor([neg / max(pos, 1)], dtype=torch.float32).to(
+                device
+            )
 
             model = build_lstm_model().to(device)
             criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+            optimizer = torch.optim.AdamW(
+                model.parameters(), lr=1e-3, weight_decay=1e-4
+            )
 
             # Quick training loop (fewer epochs for speed in experiment)
             train_ds = TensorDataset(
@@ -266,7 +285,7 @@ def run_dl_experiment(
             train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
 
             model.train()
-            for _ in range(20):   # 20 epochs max for experiment speed
+            for _ in range(20):  # 20 epochs max for experiment speed
                 for Xb, yb in train_loader:
                     Xb, yb = Xb.to(device), yb.to(device)
                     optimizer.zero_grad()
@@ -289,13 +308,18 @@ def run_dl_experiment(
 
             logger.info(
                 "  DL frac=%.2f repeat=%d | n_clips=%d F1=%.3f AUC=%.3f",
-                frac, repeat, len(selected), metrics["f1"], metrics["auc_roc"],
+                frac,
+                repeat,
+                len(selected),
+                metrics["f1"],
+                metrics["auc_roc"],
             )
 
     return results
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _stratified_sample(y: np.ndarray, n: int, seed: int) -> np.ndarray:
     """
@@ -313,10 +337,12 @@ def _stratified_sample(y: np.ndarray, n: int, seed: int) -> np.ndarray:
     n_pos = min(n_pos, len(pos_idx))
     n_neg = min(n_neg, len(neg_idx))
 
-    chosen = np.concatenate([
-        rng.choice(pos_idx, size=n_pos, replace=False),
-        rng.choice(neg_idx, size=n_neg, replace=False),
-    ])
+    chosen = np.concatenate(
+        [
+            rng.choice(pos_idx, size=n_pos, replace=False),
+            rng.choice(neg_idx, size=n_neg, replace=False),
+        ]
+    )
     return chosen
 
 
@@ -332,7 +358,7 @@ def _expand_windows(
     """
     X_parts, y_parts = [], []
     for idx in indices:
-        seqs = clip_X[idx]          # (n_windows, seq_len, feat_dim)
+        seqs = clip_X[idx]  # (n_windows, seq_len, feat_dim)
         label = clip_y[idx]
         X_parts.append(seqs)
         y_parts.extend([label] * len(seqs))
@@ -358,6 +384,7 @@ def _compute_metrics(
 
 
 # ── Aggregation + plotting ─────────────────────────────────────────────────────
+
 
 def aggregate_results(results: dict[float, list[dict]]) -> dict:
     """
@@ -393,10 +420,13 @@ def plot_results(
     """
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        logger.warning("matplotlib not installed — skipping plots. pip install matplotlib")
+        logger.warning(
+            "matplotlib not installed — skipping plots. pip install matplotlib"
+        )
         return
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -421,13 +451,31 @@ def plot_results(
 
         if classical_agg:
             means, stds = _extract(classical_agg, metric)
-            ax.plot(fracs_pct, means, "o-", color="#2563EB", label="Classical (XGBoost)", lw=2)
-            ax.fill_between(fracs_pct, means - stds, means + stds, alpha=0.15, color="#2563EB")
+            ax.plot(
+                fracs_pct,
+                means,
+                "o-",
+                color="#2563EB",
+                label="Classical (XGBoost)",
+                lw=2,
+            )
+            ax.fill_between(
+                fracs_pct, means - stds, means + stds, alpha=0.15, color="#2563EB"
+            )
 
         if dl_agg:
             means, stds = _extract(dl_agg, metric)
-            ax.plot(fracs_pct, means, "s-", color="#DC2626", label="Deep Learning (LSTM)", lw=2)
-            ax.fill_between(fracs_pct, means - stds, means + stds, alpha=0.15, color="#DC2626")
+            ax.plot(
+                fracs_pct,
+                means,
+                "s-",
+                color="#DC2626",
+                label="Deep Learning (LSTM)",
+                lw=2,
+            )
+            ax.fill_between(
+                fracs_pct, means - stds, means + stds, alpha=0.15, color="#DC2626"
+            )
 
         ax.legend(fontsize=11)
         fig.tight_layout()
@@ -447,19 +495,38 @@ def plot_results(
 
         if classical_agg:
             means, stds = _extract(classical_agg, metric)
-            ax.plot(fracs_pct, means, "o-", color="#2563EB", label="Classical (XGBoost)", lw=2)
-            ax.fill_between(fracs_pct, means - stds, means + stds, alpha=0.15, color="#2563EB")
+            ax.plot(
+                fracs_pct,
+                means,
+                "o-",
+                color="#2563EB",
+                label="Classical (XGBoost)",
+                lw=2,
+            )
+            ax.fill_between(
+                fracs_pct, means - stds, means + stds, alpha=0.15, color="#2563EB"
+            )
 
         if dl_agg:
             means, stds = _extract(dl_agg, metric)
-            ax.plot(fracs_pct, means, "s-", color="#DC2626", label="Deep Learning (LSTM)", lw=2)
-            ax.fill_between(fracs_pct, means - stds, means + stds, alpha=0.15, color="#DC2626")
+            ax.plot(
+                fracs_pct,
+                means,
+                "s-",
+                color="#DC2626",
+                label="Deep Learning (LSTM)",
+                lw=2,
+            )
+            ax.fill_between(
+                fracs_pct, means - stds, means + stds, alpha=0.15, color="#DC2626"
+            )
 
         ax.legend(fontsize=10)
 
     fig.suptitle(
         "DashcamIQ — Training Set Size Sensitivity Analysis",
-        fontsize=15, fontweight="bold",
+        fontsize=15,
+        fontweight="bold",
     )
     fig.tight_layout()
     combined_path = output_dir / "experiment_combined.png"
@@ -474,7 +541,9 @@ def print_summary(
 ) -> None:
     """Print a formatted summary table to stdout."""
     print(f"\n── {label} ─────────────────────────────────────────────")
-    print(f"  {'Fraction':>10}  {'N Train':>8}  {'F1':>8}  {'AUC-ROC':>8}  {'Precision':>10}  {'Recall':>8}")
+    print(
+        f"  {'Fraction':>10}  {'N Train':>8}  {'F1':>8}  {'AUC-ROC':>8}  {'Precision':>10}  {'Recall':>8}"
+    )
     for frac in TRAIN_FRACTIONS:
         row = agg[frac]
         print(
@@ -489,6 +558,7 @@ def print_summary(
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Training set size sensitivity analysis for DashcamIQ models"
@@ -500,15 +570,21 @@ def parse_args() -> argparse.Namespace:
         help="Which model(s) to evaluate (default: both)",
     )
     parser.add_argument(
-        "--n-repeats", type=int, default=N_REPEATS,
+        "--n-repeats",
+        type=int,
+        default=N_REPEATS,
         help=f"Repeats per fraction for error bars (default: {N_REPEATS})",
     )
     parser.add_argument(
-        "--features-dir", type=str, default="data/processed",
+        "--features-dir",
+        type=str,
+        default="data/processed",
         help="Directory containing extracted feature .npz files",
     )
     parser.add_argument(
-        "--output-dir", type=str, default=str(OUTPUT_DIR),
+        "--output-dir",
+        type=str,
+        default=str(OUTPUT_DIR),
         help="Where to save plots and results JSON",
     )
     return parser.parse_args()
@@ -516,6 +592,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     from dotenv import load_dotenv
+
     load_dotenv()
 
     args = parse_args()
@@ -573,7 +650,7 @@ def main() -> None:
 def _print_recommendation(classical_agg: dict | None, dl_agg: dict | None) -> None:
     """Print a data-driven recommendation on minimum labeling effort."""
     print("\n── Recommendation ────────────────────────────────────────────")
-    threshold = 0.70   # F1 threshold for "reliable"
+    threshold = 0.70  # F1 threshold for "reliable"
 
     for label, agg in [("Classical ML", classical_agg), ("Deep Learning", dl_agg)]:
         if agg is None:

@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class VideoMetadata:
     """Metadata extracted from a video file via ffprobe."""
+
     path: str
     duration_seconds: float
     fps: float
@@ -187,8 +188,7 @@ class FrameExtractor:
         duration = end_second - start_second
         try:
             (
-                ffmpeg
-                .input(str(self.video_path), ss=start_second, t=duration)
+                ffmpeg.input(str(self.video_path), ss=start_second, t=duration)
                 .output(
                     str(output_path),
                     vcodec="libx264",
@@ -199,7 +199,9 @@ class FrameExtractor:
                 .overwrite_output()
                 .run(capture_stdout=True, capture_stderr=True)
             )
-            logger.debug("Extracted segment %s–%ss → %s", start_second, end_second, output_path)
+            logger.debug(
+                "Extracted segment %s–%ss → %s", start_second, end_second, output_path
+            )
             return output_path
         except ffmpeg.Error as exc:
             logger.error("Segment extraction failed: %s", exc.stderr)

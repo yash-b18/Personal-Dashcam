@@ -132,6 +132,7 @@ def recalculate_overall(db: Session = Depends(get_db)) -> OverallScoreResponse:
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
+
 def _compute_and_cache_overall(db: Session) -> OverallScoreResponse:
     """Compute overall score from classical clip scores and persist."""
     from scripts.scoring import (
