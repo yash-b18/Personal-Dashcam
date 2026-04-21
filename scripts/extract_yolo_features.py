@@ -74,7 +74,6 @@ _N_CLASSES = len(_CLASS_INDEX)
 
 SAMPLE_FPS = 5.0
 CONF_THRESHOLD = 0.35
-INFER_BATCH = 32  # frames per GPU batch; larger = fewer kernel launches
 DEFAULT_IMGSZ = 480  # smaller than 640; accuracy diff on vehicle classes is <1%
 
 
@@ -157,7 +156,6 @@ def extract_yolo_features(
     conf: float = CONF_THRESHOLD,
     imgsz: int = DEFAULT_IMGSZ,
     device: str | None = None,
-    batch: int = INFER_BATCH,
 ) -> np.ndarray:
     """Run YOLOv8 on one clip and return a 20-dim feature vector."""
     video_path = Path(video_path)
@@ -167,32 +165,44 @@ def extract_yolo_features(
 
     frame_area = float(frames[0].shape[0] * frames[0].shape[1])
 
-    # Chunk the frame list into fixed-size batches. Passing the whole list to
-    # ultralytics' predict() does iterate efficiently, but calling it once
-    # per chunk of BATCH frames keeps kernel launch overhead amortised and
-    # avoids any per-item dataset construction hot path.
+    use_half = bool(device and device.startswith("cuda"))
+    # Single predict call per clip so ultralytics reuses one predictor
+    # (it rebuilds on every predict() call otherwise — ~30s/clip of overhead
+    # on L4, masquerading as slow inference).
+    results = model.predict(
+        frames,
+        imgsz=imgsz,
+        conf=conf,
+        device=device,
+        half=use_half,
+        verbose=False,
+    )
+
     per_frame: list = []
-    for start in range(0, len(frames), batch):
-        chunk = frames[start:start + batch]
-        results = model.predict(
-            chunk,
-            imgsz=imgsz,
-            conf=conf,
-            device=device,
-            verbose=False,
-        )
-        for r in results:
-            if r.boxes is None or len(r.boxes) == 0:
-                per_frame.append([])
-                continue
-            cls = r.boxes.cls.cpu().numpy().astype(int)
-            xyxy = r.boxes.xyxy.cpu().numpy()
-            widths = xyxy[:, 2] - xyxy[:, 0]
-            heights = xyxy[:, 3] - xyxy[:, 1]
-            areas = widths * heights
-            per_frame.append(list(zip(cls, areas)))
+    for r in results:
+        if r.boxes is None or len(r.boxes) == 0:
+            per_frame.append([])
+            continue
+        cls = r.boxes.cls.cpu().numpy().astype(int)
+        xyxy = r.boxes.xyxy.cpu().numpy()
+        widths = xyxy[:, 2] - xyxy[:, 0]
+        heights = xyxy[:, 3] - xyxy[:, 1]
+        areas = widths * heights
+        per_frame.append(list(zip(cls, areas)))
 
     return _aggregate(per_frame, frame_area).astype(np.float32)
+
+
+def _warmup_model(model, imgsz: int, device: str | None) -> None:
+    """First predict() call is always slow — compiles kernels, allocates
+    buffers, autotunes cudnn. Burn that cost up front on a dummy frame so
+    the real clips don't pay it."""
+    if not device or not device.startswith("cuda"):
+        return
+    dummy = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
+    t0 = time.perf_counter()
+    _ = model.predict([dummy], imgsz=imgsz, device=device, half=True, verbose=False)
+    logger.info("  warmup predict: %.2fs", time.perf_counter() - t0)
 
 
 def save_yolo_features(clip_id: str, vec: np.ndarray, out_dir: Path = PROCESSED_DIR) -> Path:
@@ -358,12 +368,25 @@ def _make_r2_client_from_env():
         config=Config(
             signature_version="s3v4",
             retries={"max_attempts": 3, "mode": "adaptive"},
-            # Must exceed --download-workers or urllib3 keeps opening/closing
-            # connections on pool overflow — slows each download by a TLS RTT.
             max_pool_connections=64,
         ),
     )
     return client, bucket
+
+
+def _download_clip(client, bucket: str, key: str) -> Path:
+    """Single-threaded download (boto3's multipart TransferManager spawns
+    10+ internal threads per file, overflowing the connection pool)."""
+    from boto3.s3.transfer import TransferConfig
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    try:
+        client.download_fileobj(
+            bucket, key, tmp,
+            Config=TransferConfig(use_threads=False, multipart_threshold=1024 ** 4),
+        )
+    finally:
+        tmp.close()
+    return Path(tmp.name)
 
 
 def _run_from_manifest(args: argparse.Namespace, model) -> None:
@@ -400,12 +423,8 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
         slot.acquire()
         t0 = time.perf_counter()
         try:
-            tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-            try:
-                client.download_fileobj(bucket, entry["r2_key_front"], tmp)
-            finally:
-                tmp.close()
-            return entry["clip_id"], Path(tmp.name), time.perf_counter() - t0
+            path = _download_clip(client, bucket, entry["r2_key_front"])
+            return entry["clip_id"], path, time.perf_counter() - t0
         except Exception:
             slot.release()
             raise
@@ -453,6 +472,7 @@ def main() -> None:
         sys.exit(1)
 
     model = _load_model(args.weights, args.device)
+    _warmup_model(model, args.imgsz, args.device)
 
     if args.manifest:
         _run_from_manifest(args, model)
