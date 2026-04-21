@@ -41,6 +41,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Semaphore
@@ -395,20 +396,22 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
     # on disk, so a slow GPU can't let the prefetch queue fill local storage.
     slot = Semaphore(args.prefetch)
 
-    def _download(entry: dict) -> tuple[str, Path]:
+    def _download(entry: dict) -> tuple[str, Path, float]:
         slot.acquire()
+        t0 = time.perf_counter()
         try:
             tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
             try:
                 client.download_fileobj(bucket, entry["r2_key_front"], tmp)
             finally:
                 tmp.close()
-            return entry["clip_id"], Path(tmp.name)
+            return entry["clip_id"], Path(tmp.name), time.perf_counter() - t0
         except Exception:
             slot.release()
             raise
 
     extracted = failed = 0
+    n_debug = 5  # per-stage timing for the first N clips
     with ThreadPoolExecutor(max_workers=args.download_workers) as pool:
         futures = {pool.submit(_download, e): e for e in pending}
         pbar = tqdm(as_completed(futures), total=len(pending),
@@ -418,10 +421,15 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
             clip_id = entry["clip_id"]
             tmp_path = None
             try:
-                clip_id, tmp_path = fut.result()
+                clip_id, tmp_path, dl_s = fut.result()
+                t1 = time.perf_counter()
                 vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz, device=args.device)
+                infer_s = time.perf_counter() - t1
                 save_yolo_features(clip_id, vec, out_dir=args.output_dir)
                 extracted += 1
+                if extracted <= n_debug:
+                    logger.info("  [timing %d] download=%.2fs infer=%.2fs",
+                                extracted, dl_s, infer_s)
             except Exception as exc:
                 logger.error("Failed on %s (%s): %s", clip_id, entry["r2_key_front"], exc)
                 failed += 1
