@@ -41,7 +41,9 @@ import logging
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Semaphore
 
 import cv2
 import numpy as np
@@ -219,6 +221,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", type=str, default=None,
                    help="'cuda', 'mps', 'cpu'. If omitted, ultralytics auto-selects.")
     p.add_argument("--force", action="store_true")
+    p.add_argument("--download-workers", type=int, default=8,
+                   help="Parallel R2 download threads in --manifest mode (default 8).")
+    p.add_argument("--prefetch", type=int, default=16,
+                   help="Max clips buffered on disk ahead of GPU (default 16).")
     return p.parse_args()
 
 
@@ -327,7 +333,11 @@ def _make_r2_client_from_env():
 
 
 def _run_from_manifest(args: argparse.Namespace, model) -> None:
-    """DB-free mode for Colab: read a JSON manifest and pull clips from R2."""
+    """DB-free mode for Colab: read a JSON manifest and pull clips from R2.
+
+    Overlaps R2 downloads with GPU inference via a bounded prefetch pool so the
+    GPU isn't idle between network-bound steps.
+    """
     entries = json.loads(args.manifest.read_text())
     if not entries:
         logger.error("Manifest %s is empty.", args.manifest)
@@ -335,34 +345,63 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
 
     client, bucket = _make_r2_client_from_env()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    extracted = skipped = failed = 0
 
-    for entry in tqdm(entries, desc="YOLO features", unit="clip"):
-        clip_id = entry["clip_id"]
-        key = entry["r2_key_front"]
-        out = args.output_dir / f"{clip_id}_yolo.npz"
+    pending, skipped = [], 0
+    for e in entries:
+        out = args.output_dir / f"{e['clip_id']}_yolo.npz"
         if out.exists() and not args.force:
             skipped += 1
-            continue
-        tmp_path = None
+        else:
+            pending.append(e)
+
+    if not pending:
+        logger.info("All %d manifest entries already processed.", skipped)
+        return
+
+    # Semaphore bounds how many downloaded-but-not-yet-consumed clips can sit
+    # on disk, so a slow GPU can't let the prefetch queue fill local storage.
+    slot = Semaphore(args.prefetch)
+
+    def _download(entry: dict) -> tuple[str, Path]:
+        slot.acquire()
         try:
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                client.download_fileobj(bucket, key, tmp)
-                tmp_path = Path(tmp.name)
-            vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz)
-            save_yolo_features(clip_id, vec, out_dir=args.output_dir)
-            extracted += 1
-        except Exception as exc:
-            logger.error("Failed on %s (%s): %s", clip_id, key, exc)
-            failed += 1
-        finally:
-            if tmp_path and tmp_path.exists():
-                tmp_path.unlink()
+            tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+            try:
+                client.download_fileobj(bucket, entry["r2_key_front"], tmp)
+            finally:
+                tmp.close()
+            return entry["clip_id"], Path(tmp.name)
+        except Exception:
+            slot.release()
+            raise
+
+    extracted = failed = 0
+    with ThreadPoolExecutor(max_workers=args.download_workers) as pool:
+        futures = {pool.submit(_download, e): e for e in pending}
+        pbar = tqdm(as_completed(futures), total=len(pending),
+                    desc="YOLO features", unit="clip")
+        for fut in pbar:
+            entry = futures[fut]
+            clip_id = entry["clip_id"]
+            tmp_path = None
+            try:
+                clip_id, tmp_path = fut.result()
+                vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz)
+                save_yolo_features(clip_id, vec, out_dir=args.output_dir)
+                extracted += 1
+            except Exception as exc:
+                logger.error("Failed on %s (%s): %s", clip_id, entry["r2_key_front"], exc)
+                failed += 1
+            finally:
+                if tmp_path and tmp_path.exists():
+                    tmp_path.unlink()
+                slot.release()
 
     logger.info("── YOLO Feature Extraction (manifest) ──────")
     logger.info("  Extracted: %d", extracted)
     logger.info("  Skipped:   %d", skipped)
     logger.info("  Failed:    %d", failed)
+    logger.info("  Workers:   %d download / prefetch=%d", args.download_workers, args.prefetch)
     logger.info("  Output:    %s/", args.output_dir)
 
 
