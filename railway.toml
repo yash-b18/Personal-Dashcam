@@ -24,6 +24,6 @@ dockerfilePath = "Dockerfile"
 [deploy]
 startCommand = "alembic upgrade head && uvicorn app:app --host 0.0.0.0 --port $PORT --workers 2"
 healthcheckPath = "/health"
-healthcheckTimeout = 30
+healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
