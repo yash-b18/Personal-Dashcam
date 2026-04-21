@@ -72,7 +72,7 @@ _CLASS_INDEX = {
 }
 _N_CLASSES = len(_CLASS_INDEX)
 
-SAMPLE_FPS = 5.0
+SAMPLE_FPS = 2.0
 CONF_THRESHOLD = 0.35
 DEFAULT_IMGSZ = 480  # smaller than 640; accuracy diff on vehicle classes is <1%
 
@@ -96,8 +96,25 @@ def _zero_vector() -> np.ndarray:
     return np.zeros(len(yolo_feature_names()), dtype=np.float32)
 
 
-def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
-    """Decode frames at `target_fps` (stride-sampled) to keep YOLO inference cheap."""
+def _sample_frames_decord(video_path: Path, target_fps: float) -> list[np.ndarray]:
+    """Strided frame sampler using decord. Seeks through the file instead of
+    decoding every frame like cv2 does — ~10x faster for small target_fps."""
+    import decord
+    # decord uses RGB by default; ultralytics expects BGR (cv2-style). Keep
+    # returning BGR for parity with the cv2 fallback and YOLO preprocessing.
+    vr = decord.VideoReader(str(video_path), ctx=decord.cpu(0))
+    src_fps = float(vr.get_avg_fps() or 30.0)
+    stride = max(1, int(round(src_fps / target_fps)))
+    indices = list(range(0, len(vr), stride))
+    if not indices:
+        return []
+    batch = vr.get_batch(indices).asnumpy()  # (N, H, W, 3) RGB
+    return [frame[:, :, ::-1].copy() for frame in batch]  # RGB -> BGR
+
+
+def _sample_frames_cv2(video_path: Path, target_fps: float) -> list[np.ndarray]:
+    """Fallback sampler — cv2 read-every-frame-and-skip. Slow on long clips
+    because it decodes every frame even when the stride is large."""
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"cannot open {video_path}")
@@ -115,6 +132,15 @@ def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
         return frames
     finally:
         cap.release()
+
+
+def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
+    """Decode frames at `target_fps`. Prefer decord (seeks) over cv2 (reads all)."""
+    try:
+        import decord  # noqa: F401
+        return _sample_frames_decord(video_path, target_fps)
+    except ImportError:
+        return _sample_frames_cv2(video_path, target_fps)
 
 
 def _aggregate(detections: list[dict], frame_area: float) -> np.ndarray:
