@@ -477,6 +477,8 @@ Triggered via `POST /videos/{id}/process`:
 | `feature/frontend-dashboard` | ✅ Merged | Driver dashboard (score gauge, charts, trip history) |
 | `feature/frontend-anomalies` | ✅ Merged | Anomaly explorer + detail view with synced player |
 | `feature/deployment` | ✅ Merged | Docker, Railway config, Vercel config, CI/CD |
+| `feature/ui-improvements` | ✅ Merged | Single-model production pipeline, clip review modal, per-clip anomaly types with peak-window localization, reprocess-all, ambiguous-type threshold, YOLO scene-features scaffolding, Colab manifest mode + perf pass on the YOLO extract loop |
+| `feature/ui-improvements-v2` | 🚧 In progress | Dashboard polish (gauge decimal + A/B/C/D threshold labels, flagged-rate caption, 7-day avg-per-day trend, top-3 incidents, recent-5 trip history), persistent canvas-snapshot thumbnails, anomaly list presigned URLs, metadata-tab removed, 10/20/30 per-page selector, sidebar tidy-up |
 
 ---
 
