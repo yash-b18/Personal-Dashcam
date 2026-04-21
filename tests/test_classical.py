@@ -4,7 +4,6 @@ Unit tests for the classical ML feature extraction and classifier.
 Tests use synthetic data — no video files, no DB connection, no R2 access.
 """
 
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +20,7 @@ from scripts.models.classical import ClassicalAnomalyClassifier, ClassicalResult
 
 
 # ── Feature name contract ──────────────────────────────────────────────────────
+
 
 class TestFeatureNames:
     """Verify the feature vector contract is stable."""
@@ -44,14 +44,21 @@ class TestFeatureNames:
     def test_required_features_present(self) -> None:
         names = set(feature_names())
         required = {
-            "flow_mean", "flow_max", "flow_p95",
-            "window_n_flagged", "spike_rate", "max_consecutive_spikes",
-            "direction_variance", "blur_mean", "edge_density_std",
+            "flow_mean",
+            "flow_max",
+            "flow_p95",
+            "window_n_flagged",
+            "spike_rate",
+            "max_consecutive_spikes",
+            "direction_variance",
+            "blur_mean",
+            "edge_density_std",
         }
         assert required.issubset(names)
 
 
 # ── Consecutive spike helper ───────────────────────────────────────────────────
+
 
 class TestMaxConsecutiveTrue:
     def test_all_false(self) -> None:
@@ -72,6 +79,7 @@ class TestMaxConsecutiveTrue:
 
 
 # ── Feature save / load round-trip ────────────────────────────────────────────
+
 
 class TestSaveLoadFeatures:
     def test_round_trip(self, tmp_path: Path) -> None:
@@ -97,6 +105,7 @@ class TestSaveLoadFeatures:
 
 
 # ── ClassicalAnomalyClassifier ────────────────────────────────────────────────
+
 
 class TestClassicalAnomalyClassifier:
     """Tests for the classifier using synthetic data (no DB or R2 needed)."""
@@ -157,10 +166,9 @@ class TestClassicalAnomalyClassifier:
         X = np.zeros((10, len(names)), dtype=np.float32)
         y = np.array([0, 1] * 5, dtype=np.int32)
         clf._scaler = StandardScaler().fit(X)
-        clf._model = xgb.XGBClassifier(n_estimators=5, use_label_encoder=False,
-                                        eval_metric="logloss").fit(
-            clf._scaler.transform(X), y
-        )
+        clf._model = xgb.XGBClassifier(
+            n_estimators=5, use_label_encoder=False, eval_metric="logloss"
+        ).fit(clf._scaler.transform(X), y)
         clf._feature_names = names
 
         result = clf.predict("test-clip", features_dir=tmp_path)
@@ -179,10 +187,9 @@ class TestClassicalAnomalyClassifier:
         X = np.zeros((4, len(names)), dtype=np.float32)
         y = np.array([0, 1, 0, 1], dtype=np.int32)
         clf._scaler = StandardScaler().fit(X)
-        clf._model = xgb.XGBClassifier(n_estimators=5, use_label_encoder=False,
-                                        eval_metric="logloss").fit(
-            clf._scaler.transform(X), y
-        )
+        clf._model = xgb.XGBClassifier(
+            n_estimators=5, use_label_encoder=False, eval_metric="logloss"
+        ).fit(clf._scaler.transform(X), y)
         clf._feature_names = names
 
         with pytest.raises(FileNotFoundError):
@@ -203,10 +210,9 @@ class TestClassicalAnomalyClassifier:
         X = np.zeros((10, len(names)), dtype=np.float32)
         y = np.array([0, 1] * 5, dtype=np.int32)
         clf._scaler = StandardScaler().fit(X)
-        clf._model = xgb.XGBClassifier(n_estimators=5, use_label_encoder=False,
-                                        eval_metric="logloss").fit(
-            clf._scaler.transform(X), y
-        )
+        clf._model = xgb.XGBClassifier(
+            n_estimators=5, use_label_encoder=False, eval_metric="logloss"
+        ).fit(clf._scaler.transform(X), y)
         clf._feature_names = names
         clf.save()
 

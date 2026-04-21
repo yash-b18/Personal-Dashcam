@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
 # ── Tunable thresholds ────────────────────────────────────────────────────────
 MAGNITUDE_THRESHOLD: float = 12.0
 VARIANCE_THRESHOLD: float = 6.0
-WINDOW_SIZE_FRAMES: int = 30        # ~1 second at 30 fps
-STEP_SIZE_FRAMES: int = 15          # 50% overlap
-MIN_MERGE_GAP_FRAMES: int = 10      # merge windows closer than this
+WINDOW_SIZE_FRAMES: int = 30  # ~1 second at 30 fps
+STEP_SIZE_FRAMES: int = 15  # 50% overlap
+MIN_MERGE_GAP_FRAMES: int = 10  # merge windows closer than this
 
 # Farneback parameters tuned for 1080p dashcam footage
 _FB_PARAMS = dict(
@@ -57,6 +57,7 @@ _FB_PARAMS = dict(
 @dataclass
 class AnomalyWindow:
     """A contiguous segment of frames flagged as anomalous."""
+
     start_frame: int
     end_frame: int
     start_second: float
@@ -64,12 +65,13 @@ class AnomalyWindow:
     peak_magnitude: float
     mean_magnitude: float
     magnitude_std: float
-    severity: float           # 0.0 – 1.0
+    severity: float  # 0.0 – 1.0
 
 
 @dataclass
 class BaselineResult:
     """Result of running the optical flow baseline on a single clip."""
+
     clip_path: str
     is_anomaly: bool
     severity: float
@@ -167,9 +169,7 @@ class OpticalFlowBaseline:
 
     # ── Core algorithm ────────────────────────────────────────────────────────
 
-    def _compute_flow_magnitudes(
-        self, video_path: Path
-    ) -> tuple[np.ndarray, float]:
+    def _compute_flow_magnitudes(self, video_path: Path) -> tuple[np.ndarray, float]:
         """
         Compute per-frame mean optical flow magnitudes via Farneback.
 
@@ -244,13 +244,15 @@ class OpticalFlowBaseline:
             std = float(np.std(window))
 
             if peak > self.magnitude_threshold or std > self.variance_threshold:
-                windows.append({
-                    "start_frame": start,
-                    "end_frame": end,
-                    "peak_magnitude": peak,
-                    "mean_magnitude": mean,
-                    "magnitude_std": std,
-                })
+                windows.append(
+                    {
+                        "start_frame": start,
+                        "end_frame": end,
+                        "peak_magnitude": peak,
+                        "mean_magnitude": mean,
+                        "magnitude_std": std,
+                    }
+                )
 
         return windows
 

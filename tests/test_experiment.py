@@ -4,8 +4,6 @@ Unit tests for the training set size sensitivity experiment.
 All tests use synthetic data — no DB, no R2, no video files.
 """
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -19,6 +17,7 @@ from scripts.experiment import (
 
 
 # ── _stratified_sample ─────────────────────────────────────────────────────────
+
 
 class TestStratifiedSample:
     def _labels(self, n_pos: int, n_neg: int) -> np.ndarray:
@@ -62,10 +61,11 @@ class TestStratifiedSample:
     def test_handles_imbalanced_classes(self) -> None:
         y = self._labels(2, 18)
         idx = _stratified_sample(y, 4, seed=5)
-        assert len(idx) >= 2   # at minimum one of each class
+        assert len(idx) >= 2  # at minimum one of each class
 
 
 # ── _expand_windows ────────────────────────────────────────────────────────────
+
 
 class TestExpandWindows:
     def _make_clip_data(self, n_clips: int = 5, n_windows: int = 4) -> tuple:
@@ -79,7 +79,7 @@ class TestExpandWindows:
     def test_output_shapes(self) -> None:
         clip_X, clip_y = self._make_clip_data(5, 4)
         X, y = _expand_windows(clip_X, clip_y, np.arange(5))
-        assert X.shape == (20, 30, 13)   # 5 clips * 4 windows
+        assert X.shape == (20, 30, 13)  # 5 clips * 4 windows
         assert y.shape == (20,)
 
     def test_label_propagation(self) -> None:
@@ -87,8 +87,8 @@ class TestExpandWindows:
         clip_X = [np.zeros((3, 30, 13), dtype=np.float32)] * 2
         clip_y = np.array([1, 0], dtype=np.int32)
         X, y = _expand_windows(clip_X, clip_y, np.array([0, 1]))
-        assert all(y[:3] == 1)   # first clip windows
-        assert all(y[3:] == 0)   # second clip windows
+        assert all(y[:3] == 1)  # first clip windows
+        assert all(y[3:] == 0)  # second clip windows
 
     def test_subset_indices(self) -> None:
         clip_X, clip_y = self._make_clip_data(5, 4)
@@ -104,6 +104,7 @@ class TestExpandWindows:
 
 
 # ── _compute_metrics ───────────────────────────────────────────────────────────
+
 
 class TestComputeMetrics:
     def test_perfect_predictions(self) -> None:
@@ -150,16 +151,19 @@ class TestComputeMetrics:
 
 # ── aggregate_results ──────────────────────────────────────────────────────────
 
+
 class TestAggregateResults:
     def _make_results(self) -> dict:
         """Synthetic raw results: 3 repeats per fraction."""
         raw = {}
         for frac in TRAIN_FRACTIONS:
             raw[frac] = [
-                {"f1": 0.6 + frac * 0.2 + 0.01 * r,
-                 "auc_roc": 0.65 + frac * 0.15 + 0.01 * r,
-                 "precision": 0.7,
-                 "recall": 0.6}
+                {
+                    "f1": 0.6 + frac * 0.2 + 0.01 * r,
+                    "auc_roc": 0.65 + frac * 0.15 + 0.01 * r,
+                    "precision": 0.7,
+                    "recall": 0.6,
+                }
                 for r in range(3)
             ]
         return raw

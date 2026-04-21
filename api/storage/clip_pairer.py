@@ -32,7 +32,12 @@ MATCH_TOLERANCE_SECONDS = 5
 
 # Ordered list of (regex, strptime_format) patterns tried in sequence
 _TIMESTAMP_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"(\d{4})[-_]?(\d{2})[-_]?(\d{2})[-_](\d{2})[-_]?(\d{2})[-_]?(\d{2})"), "%Y%m%d%H%M%S"),
+    (
+        re.compile(
+            r"(\d{4})[-_]?(\d{2})[-_]?(\d{2})[-_](\d{2})[-_]?(\d{2})[-_]?(\d{2})"
+        ),
+        "%Y%m%d%H%M%S",
+    ),
     (re.compile(r"(\d{8})_(\d{6})"), "%Y%m%d_%H%M%S"),
     (re.compile(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})"), "%Y-%m-%d_%H-%M-%S"),
 ]
@@ -41,10 +46,11 @@ _TIMESTAMP_PATTERNS: list[tuple[re.Pattern, str]] = [
 @dataclass
 class ClipPair:
     """A matched pair of front and rear camera clips."""
+
     front_key: str
     rear_key: str
     timestamp: datetime
-    filename_prefix: str     # shared base name used as human-readable ID
+    filename_prefix: str  # shared base name used as human-readable ID
     front_size_bytes: int
     rear_size_bytes: int
 
@@ -52,9 +58,10 @@ class ClipPair:
 @dataclass
 class PairingResult:
     """Result of pairing all front and rear objects from R2."""
+
     pairs: list[ClipPair]
-    unmatched_front: list[str]    # R2 keys with no rear match
-    unmatched_rear: list[str]     # R2 keys with no front match
+    unmatched_front: list[str]  # R2 keys with no rear match
+    unmatched_rear: list[str]  # R2 keys with no front match
 
 
 def extract_timestamp(key: str) -> datetime | None:
@@ -73,12 +80,18 @@ def extract_timestamp(key: str) -> datetime | None:
     filename = key.split("/")[-1]
 
     # Pattern 1: YYYYMMDD_HHMMSS or YYYY_MM_DD_HH_MM_SS variants
-    m = re.search(r"(\d{4})[_-]?(\d{2})[_-]?(\d{2})[_-](\d{2})[_-]?(\d{2})[_-]?(\d{2})", filename)
+    m = re.search(
+        r"(\d{4})[_-]?(\d{2})[_-]?(\d{2})[_-](\d{2})[_-]?(\d{2})[_-]?(\d{2})", filename
+    )
     if m:
         try:
             return datetime(
-                int(m.group(1)), int(m.group(2)), int(m.group(3)),
-                int(m.group(4)), int(m.group(5)), int(m.group(6)),
+                int(m.group(1)),
+                int(m.group(2)),
+                int(m.group(3)),
+                int(m.group(4)),
+                int(m.group(5)),
+                int(m.group(6)),
             )
         except ValueError:
             pass
@@ -88,8 +101,12 @@ def extract_timestamp(key: str) -> datetime | None:
     if m:
         try:
             return datetime(
-                int(m.group(1)), int(m.group(2)), int(m.group(3)),
-                int(m.group(4)), int(m.group(5)), int(m.group(6)),
+                int(m.group(1)),
+                int(m.group(2)),
+                int(m.group(3)),
+                int(m.group(4)),
+                int(m.group(5)),
+                int(m.group(6)),
             )
         except ValueError:
             pass
@@ -138,6 +155,7 @@ def pair_clips(
     Returns:
         PairingResult with matched pairs and lists of unmatched keys.
     """
+
     def _build_index(objects: list[dict]) -> list[tuple[datetime, dict]]:
         indexed = []
         for obj in objects:
@@ -198,6 +216,10 @@ def pair_clips(
 
     logger.info(
         "Pairing complete: %d pairs, %d unmatched front, %d unmatched rear",
-        len(pairs), len(unmatched_front), len(unmatched_rear),
+        len(pairs),
+        len(unmatched_front),
+        len(unmatched_rear),
     )
-    return PairingResult(pairs=pairs, unmatched_front=unmatched_front, unmatched_rear=unmatched_rear)
+    return PairingResult(
+        pairs=pairs, unmatched_front=unmatched_front, unmatched_rear=unmatched_rear
+    )

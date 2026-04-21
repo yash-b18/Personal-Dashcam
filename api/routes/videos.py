@@ -176,7 +176,9 @@ async def upload_video(
         )
 
     # Sanitize the prefix so it's safe as an R2 key fragment + DB column
-    safe_stem = re.sub(r"[^a-zA-Z0-9_-]", "_", Path(file.filename).stem)[:200] or "upload"
+    safe_stem = (
+        re.sub(r"[^a-zA-Z0-9_-]", "_", Path(file.filename).stem)[:200] or "upload"
+    )
     clip_id = uuid.uuid4()
     filename_prefix = f"{safe_stem}_{clip_id.hex[:8]}"
     r2_key = f"{UPLOAD_PREFIX}{filename_prefix}{suffix}"
@@ -191,6 +193,7 @@ async def upload_video(
         r2 = R2Client()
         # Rewind by using an in-memory buffer for the already-read chunk + remainder
         import io
+
         buf = io.BytesIO()
         while chunk:
             size += len(chunk)
@@ -225,14 +228,19 @@ async def upload_video(
 
     # Enqueue processing — results will feed into the overall driver score recalc
     from api.tasks.video_tasks import process_clip as celery_task
+
     task = celery_task.delay(str(clip_id))
 
-    logger.info("Uploaded %s (%d bytes) → clip %s, task %s", r2_key, size, clip_id, task.id)
+    logger.info(
+        "Uploaded %s (%d bytes) → clip %s, task %s", r2_key, size, clip_id, task.id
+    )
     return ProcessResponse(task_id=task.id, clip_id=clip_id)
 
 
 @router.post("/{clip_id}/process", response_model=ProcessResponse)
-def process_clip_endpoint(clip_id: uuid.UUID, db: Session = Depends(get_db)) -> ProcessResponse:
+def process_clip_endpoint(
+    clip_id: uuid.UUID, db: Session = Depends(get_db)
+) -> ProcessResponse:
     """Enqueue the clip for async ML processing via Celery."""
     clip = db.query(Clip).filter(Clip.id == clip_id).first()
     if not clip:
@@ -241,6 +249,7 @@ def process_clip_endpoint(clip_id: uuid.UUID, db: Session = Depends(get_db)) -> 
         raise HTTPException(status_code=409, detail="Clip is already being processed")
 
     from api.tasks.video_tasks import process_clip as celery_task
+
     task = celery_task.delay(str(clip_id))
     clip.processing_status = ProcessingStatus.PROCESSING
     db.commit()
@@ -252,7 +261,9 @@ def process_all_pending(db: Session = Depends(get_db)) -> ProcessAllResponse:
     """Enqueue all PENDING clips for processing."""
     from api.tasks.video_tasks import process_clip as celery_task
 
-    pending = db.query(Clip).filter(Clip.processing_status == ProcessingStatus.PENDING).all()
+    pending = (
+        db.query(Clip).filter(Clip.processing_status == ProcessingStatus.PENDING).all()
+    )
     for clip in pending:
         celery_task.delay(str(clip.id))
         clip.processing_status = ProcessingStatus.PROCESSING

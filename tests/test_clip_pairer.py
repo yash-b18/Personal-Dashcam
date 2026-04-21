@@ -6,7 +6,6 @@ Tests timestamp extraction and front/rear pairing without any R2 connection.
 
 from datetime import datetime
 
-import pytest
 
 from api.storage.clip_pairer import extract_timestamp, pair_clips
 

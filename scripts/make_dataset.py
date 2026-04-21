@@ -27,12 +27,12 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from api.config import get_settings
-from api.database import SessionLocal
-from api.models.db_models import Clip, ProcessingStatus
-from api.storage.clip_pairer import ClipPair, pair_clips
-from api.storage.r2_client import R2Client
-from api.video.frame_extractor import FrameExtractor
+from api.config import get_settings  # noqa: E402
+from api.database import SessionLocal  # noqa: E402
+from api.models.db_models import Clip, ProcessingStatus  # noqa: E402
+from api.storage.clip_pairer import ClipPair, pair_clips  # noqa: E402
+from api.storage.r2_client import R2Client  # noqa: E402
+from api.video.frame_extractor import FrameExtractor  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,7 +115,9 @@ def ingest_pairs(
     counts = {"inserted": 0, "updated": 0}
 
     for pair in tqdm(pairs, desc="Ingesting clips", unit="pair"):
-        existing = db.query(Clip).filter_by(filename_prefix=pair.filename_prefix).first()
+        existing = (
+            db.query(Clip).filter_by(filename_prefix=pair.filename_prefix).first()
+        )
 
         duration = None
         if fetch_metadata:
@@ -138,16 +140,18 @@ def ingest_pairs(
                 existing.recorded_at = pair.timestamp
             counts["updated"] += 1
         else:
-            db.add(Clip(
-                r2_key_front=pair.front_key,
-                r2_key_rear=pair.rear_key,
-                filename_prefix=pair.filename_prefix,
-                duration_seconds=duration,
-                file_size_bytes_front=pair.front_size_bytes,
-                file_size_bytes_rear=pair.rear_size_bytes,
-                recorded_at=pair.timestamp,
-                processing_status=ProcessingStatus.PENDING,
-            ))
+            db.add(
+                Clip(
+                    r2_key_front=pair.front_key,
+                    r2_key_rear=pair.rear_key,
+                    filename_prefix=pair.filename_prefix,
+                    duration_seconds=duration,
+                    file_size_bytes_front=pair.front_size_bytes,
+                    file_size_bytes_rear=pair.rear_size_bytes,
+                    recorded_at=pair.timestamp,
+                    processing_status=ProcessingStatus.PENDING,
+                )
+            )
             counts["inserted"] += 1
 
     if not dry_run:
@@ -171,15 +175,19 @@ def main() -> None:
     logger.info("Found %d rear clips", len(rear_objects))
 
     result = pair_clips(front_objects, rear_objects)
-    pairs = result.pairs[:args.limit] if args.limit else result.pairs
+    pairs = result.pairs[: args.limit] if args.limit else result.pairs
 
     logger.info(
         "Pairing: %d pairs | %d unmatched front | %d unmatched rear",
-        len(pairs), len(result.unmatched_front), len(result.unmatched_rear),
+        len(pairs),
+        len(result.unmatched_front),
+        len(result.unmatched_rear),
     )
 
     if not pairs:
-        logger.warning("No clip pairs found. Check R2 folder structure and filename format.")
+        logger.warning(
+            "No clip pairs found. Check R2 folder structure and filename format."
+        )
         sys.exit(1)
 
     db = SessionLocal()

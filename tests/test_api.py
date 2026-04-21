@@ -14,6 +14,7 @@ import pytest
 
 # ── Shared app fixture ─────────────────────────────────────────────────────────
 
+
 @pytest.fixture(scope="module")
 def app_client():
     from fastapi.testclient import TestClient
@@ -27,19 +28,10 @@ def app_client():
         db.query.return_value.count.return_value = 0
         db.query.return_value.filter.return_value.subquery.return_value = MagicMock()
         (
-            db.query.return_value
-               .filter.return_value
-               .order_by.return_value
-               .offset.return_value
-               .limit.return_value
-               .all.return_value
+            db.query.return_value.filter.return_value.order_by.return_value.offset.return_value.limit.return_value.all.return_value
         ) = []
         (
-            db.query.return_value
-               .order_by.return_value
-               .offset.return_value
-               .limit.return_value
-               .all.return_value
+            db.query.return_value.order_by.return_value.offset.return_value.limit.return_value.all.return_value
         ) = []
         yield db
 
@@ -51,21 +43,30 @@ def app_client():
 
 # ── Schemas (no DB needed) ─────────────────────────────────────────────────────
 
+
 class TestSchemas:
     def test_clip_summary_required_fields(self) -> None:
         from api.schemas import ClipSummary
+
         uid = uuid.uuid4()
         obj = ClipSummary(
-            id=uid, filename_prefix="20240101_120000",
-            processing_status="done", score=85.5, grade="B", anomaly_count=2,
+            id=uid,
+            filename_prefix="20240101_120000",
+            processing_status="done",
+            score=85.5,
+            grade="B",
+            anomaly_count=2,
         )
         assert obj.id == uid
         assert obj.grade == "B"
 
     def test_clip_summary_optional_fields_default_none(self) -> None:
         from api.schemas import ClipSummary
+
         obj = ClipSummary(
-            id=uuid.uuid4(), filename_prefix="clip", processing_status="pending",
+            id=uuid.uuid4(),
+            filename_prefix="clip",
+            processing_status="pending",
         )
         assert obj.score is None
         assert obj.grade is None
@@ -75,6 +76,7 @@ class TestSchemas:
 
     def test_label_submit_full(self) -> None:
         from api.schemas import LabelSubmit
+
         ls = LabelSubmit(
             is_anomaly=True,
             anomaly_types=["hard_braking", "near_miss"],
@@ -85,76 +87,102 @@ class TestSchemas:
 
     def test_label_submit_minimal(self) -> None:
         from api.schemas import LabelSubmit
+
         ls = LabelSubmit(is_anomaly=False)
         assert ls.anomaly_types is None
         assert ls.reason is None
 
     def test_overall_score_response(self) -> None:
         from api.schemas import OverallScoreResponse
+
         r = OverallScoreResponse(
-            score=78.5, grade="C", clips_analyzed=42,
+            score=78.5,
+            grade="C",
+            clips_analyzed=42,
             breakdown={"hard_braking": 15.0},
         )
         assert r.score == 78.5
 
     def test_anomaly_breakdown_schema(self) -> None:
         from api.schemas import AnomalyBreakdown
-        ab = AnomalyBreakdown(anomaly_type="near_miss", count=3, total_score_impact=75.0)
+
+        ab = AnomalyBreakdown(
+            anomaly_type="near_miss", count=3, total_score_impact=75.0
+        )
         assert ab.count == 3
 
     def test_process_response_defaults(self) -> None:
         from api.schemas import ProcessResponse
+
         pr = ProcessResponse(task_id="abc-123", clip_id=uuid.uuid4())
         assert pr.status == "queued"
 
     def test_clip_list_response(self) -> None:
         from api.schemas import ClipListResponse
+
         r = ClipListResponse(clips=[], total=0, page=1, page_size=20)
         assert r.total == 0
 
     def test_anomaly_list_response_empty(self) -> None:
         from api.schemas import AnomalyListResponse
+
         r = AnomalyListResponse(anomalies=[], total=0, page=1, page_size=20)
         assert r.anomalies == []
 
     def test_label_queue_response(self) -> None:
         from api.schemas import LabelQueueResponse
+
         r = LabelQueueResponse(clips=[], total_unlabeled=100)
         assert r.total_unlabeled == 100
 
     def test_score_history_response(self) -> None:
         from api.schemas import ScoreHistoryResponse
+
         r = ScoreHistoryResponse(history=[], total=0)
         assert r.total == 0
 
     def test_anomaly_summary_schema(self) -> None:
         from api.schemas import AnomalySummary
+
         a = AnomalySummary(
-            id=uuid.uuid4(), clip_id=uuid.uuid4(),
-            model_type="baseline", anomaly_type="hard_braking",
-            severity=0.7, confidence=0.8,
-            timestamp_start=5.0, timestamp_end=7.0,
-            score_impact=12.5, detected_at=datetime.now(timezone.utc),
+            id=uuid.uuid4(),
+            clip_id=uuid.uuid4(),
+            model_type="baseline",
+            anomaly_type="hard_braking",
+            severity=0.7,
+            confidence=0.8,
+            timestamp_start=5.0,
+            timestamp_end=7.0,
+            score_impact=12.5,
+            detected_at=datetime.now(timezone.utc),
         )
         assert a.anomaly_type == "hard_braking"
         assert a.ai_explanation is None
 
     def test_dashboard_response(self) -> None:
         from api.schemas import DashboardResponse
+
         r = DashboardResponse(
-            overall_score=82.0, grade="B", clips_analyzed=15,
-            recent_anomaly_count=3, anomaly_breakdown=[], score_trend=[],
+            overall_score=82.0,
+            grade="B",
+            clips_analyzed=15,
+            recent_anomaly_count=3,
+            clips_with_anomalies=2,
+            anomaly_breakdown=[],
+            score_trend=[],
         )
         assert r.overall_score == 82.0
 
     def test_process_all_response(self) -> None:
         from api.schemas import ProcessAllResponse
+
         r = ProcessAllResponse(enqueued=5)
         assert r.enqueued == 5
         assert r.status == "queued"
 
 
 # ── Health endpoint ────────────────────────────────────────────────────────────
+
 
 class TestHealthEndpoint:
     def test_health_returns_ok(self, app_client) -> None:
@@ -168,6 +196,7 @@ class TestHealthEndpoint:
 
 
 # ── Video routes ───────────────────────────────────────────────────────────────
+
 
 class TestVideoRoutes:
     def test_list_clips_empty(self, app_client) -> None:
@@ -192,6 +221,7 @@ class TestVideoRoutes:
 
 # ── Anomaly routes ─────────────────────────────────────────────────────────────
 
+
 class TestAnomalyRoutes:
     def test_list_anomalies_empty(self, app_client) -> None:
         response = app_client.get("/api/v1/anomalies")
@@ -211,6 +241,7 @@ class TestAnomalyRoutes:
 
 
 # ── Label routes ───────────────────────────────────────────────────────────────
+
 
 class TestLabelRoutes:
     def test_get_label_not_found(self, app_client) -> None:

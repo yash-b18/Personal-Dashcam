@@ -46,6 +46,7 @@ def create_directories() -> None:
 def check_env_vars() -> bool:
     """Validate that all required environment variables are set."""
     from dotenv import load_dotenv
+
     load_dotenv()
 
     missing = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]

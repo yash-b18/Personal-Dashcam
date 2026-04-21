@@ -13,7 +13,6 @@ Scoring model:
   - Grade: A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, F < 60
 """
 
-import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
@@ -21,6 +20,7 @@ from enum import Enum
 
 class AnomalyType(str, Enum):
     """Anomaly categories mirroring the DB enum."""
+
     HARD_BRAKING = "hard_braking"
     HARD_ACCELERATION = "hard_acceleration"
     NEAR_MISS = "near_miss"
@@ -65,13 +65,15 @@ RECENCY_DECAY = 0.9
 @dataclass
 class AnomalyInput:
     """Lightweight anomaly descriptor for scoring calculations."""
+
     anomaly_type: AnomalyType
-    severity: float   # 0.0 – 1.0
+    severity: float  # 0.0 – 1.0
 
 
 @dataclass
 class ClipScoreResult:
     """Scoring output for a single clip."""
+
     clip_id: str
     score: float
     grade: str
@@ -82,6 +84,7 @@ class ClipScoreResult:
 @dataclass
 class OverallScoreResult:
     """Aggregate driver score across all clips."""
+
     score: float
     grade: str
     clips_analyzed: int
@@ -107,13 +110,18 @@ def score_clip(clip_id: str, anomalies: list[AnomalyInput]) -> ClipScoreResult:
     for anomaly in anomalies:
         atype = anomaly.anomaly_type
         severity = max(0.0, min(1.0, anomaly.severity))
-        raw_by_type[atype] += severity * MAX_DEDUCTIONS.get(atype, MAX_DEDUCTIONS[AnomalyType.OTHER])
+        raw_by_type[atype] += severity * MAX_DEDUCTIONS.get(
+            atype, MAX_DEDUCTIONS[AnomalyType.OTHER]
+        )
 
     # Apply per-type cap and build breakdown
     breakdown: dict[str, float] = {}
     total_deduction = 0.0
     for atype, raw_deduction in raw_by_type.items():
-        cap = MAX_DEDUCTIONS.get(atype, MAX_DEDUCTIONS[AnomalyType.OTHER]) * SAME_TYPE_CAP_MULTIPLIER
+        cap = (
+            MAX_DEDUCTIONS.get(atype, MAX_DEDUCTIONS[AnomalyType.OTHER])
+            * SAME_TYPE_CAP_MULTIPLIER
+        )
         capped = min(raw_deduction, cap)
         breakdown[atype.value] = round(capped, 2)
         total_deduction += capped

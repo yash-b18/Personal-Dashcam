@@ -59,7 +59,9 @@ def list_anomalies(
             r2 = R2Client()
             for clip in clips:
                 try:
-                    front_urls[clip.id] = r2.presigned_url(clip.r2_key_front, expires_in=3600)
+                    front_urls[clip.id] = r2.presigned_url(
+                        clip.r2_key_front, expires_in=3600
+                    )
                 except Exception:
                     front_urls[clip.id] = None
         except Exception:

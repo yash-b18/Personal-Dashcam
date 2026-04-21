@@ -39,18 +39,17 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SEQUENCE_LENGTH = 30    # frames per window (~1 sec at 30fps with skip=2)
-STEP_SIZE = 15          # 50% overlap
+SEQUENCE_LENGTH = 30  # frames per window (~1 sec at 30fps with skip=2)
+STEP_SIZE = 15  # 50% overlap
 FEATURE_DIM = 13
-FRAME_SKIP = 2          # process every Nth frame
+FRAME_SKIP = 2  # process every Nth frame
 
 # COCO class ID sets
-_VEHICLE_IDS = {2, 3, 5, 7}          # car, motorcycle, bus, truck
-_PEDESTRIAN_IDS = {0}                 # person
-_CYCLIST_IDS = {1}                    # bicycle
+_VEHICLE_IDS = {2, 3, 5, 7}  # car, motorcycle, bus, truck
+_PEDESTRIAN_IDS = {0}  # person
+_CYCLIST_IDS = {1}  # bicycle
 _TRAFFIC_LIGHT_IDS = {9}
 _STOP_SIGN_IDS = {11}
-
 
 
 class SequenceBuilder:
@@ -76,13 +75,14 @@ class SequenceBuilder:
         self.yolo_model_path = yolo_model_path
         self.device = device
         self.confidence = confidence
-        self._yolo = None   # loaded lazily
+        self._yolo = None  # loaded lazily
 
     def _load_yolo(self):
         """Lazily load YOLOv8 model on first use."""
         if self._yolo is None:
             try:
                 from ultralytics import YOLO
+
                 self._yolo = YOLO(self.yolo_model_path)
                 logger.info("Loaded YOLOv8 from %s", self.yolo_model_path)
             except Exception as exc:
@@ -132,7 +132,9 @@ class SequenceBuilder:
 
                 h, w = frame.shape[:2]
                 if w > 640:
-                    frame = cv2.resize(frame, (640, int(h * 640 / w)), interpolation=cv2.INTER_AREA)
+                    frame = cv2.resize(
+                        frame, (640, int(h * 640 / w)), interpolation=cv2.INTER_AREA
+                    )
                     h, w = frame.shape[:2]
 
                 frame_area = h * w
@@ -149,8 +151,13 @@ class SequenceBuilder:
                     diff = cv2.absdiff(prev_gray, gray).astype(np.float32)
                     mean_mag = float(np.mean(diff))
                     p90_mag = float(np.percentile(diff, 90))
-                    _, thresh = cv2.threshold(diff.astype(np.uint8), 25, 255, cv2.THRESH_BINARY)
-                    motion_dir = float(np.mean(thresh[:gray.shape[0]//2]) - np.mean(thresh[gray.shape[0]//2:]))
+                    _, thresh = cv2.threshold(
+                        diff.astype(np.uint8), 25, 255, cv2.THRESH_BINARY
+                    )
+                    motion_dir = float(
+                        np.mean(thresh[: gray.shape[0] // 2])
+                        - np.mean(thresh[gray.shape[0] // 2 :])
+                    )
                     angle = np.arctan2(motion_dir, mean_mag + 1e-6)
                 else:
                     mean_mag = p90_mag = angle = 0.0
@@ -161,14 +168,17 @@ class SequenceBuilder:
                 edge_frac = float(np.sum(edges > 0)) / max(frame_area, 1)
 
                 # ── Assemble feature vector ───────────────────────────────
-                flow_vec = np.array([
-                    mean_mag / 20.0,
-                    np.sin(angle),
-                    np.cos(angle),
-                    min(blur / 500.0, 1.0),
-                    min(edge_frac, 1.0),
-                    min(p90_mag / 20.0, 1.0),
-                ], dtype=np.float32)
+                flow_vec = np.array(
+                    [
+                        mean_mag / 20.0,
+                        np.sin(angle),
+                        np.cos(angle),
+                        min(blur / 500.0, 1.0),
+                        min(edge_frac, 1.0),
+                        min(p90_mag / 20.0, 1.0),
+                    ],
+                    dtype=np.float32,
+                )
 
                 frame_vec = np.concatenate([feat, flow_vec])  # (13,)
                 frame_features.append(frame_vec)
@@ -179,11 +189,13 @@ class SequenceBuilder:
         if len(frame_features) < SEQUENCE_LENGTH:
             logger.warning(
                 "%s too short (%d frames) for sequence length %d",
-                video_path.name, len(frame_features), SEQUENCE_LENGTH,
+                video_path.name,
+                len(frame_features),
+                SEQUENCE_LENGTH,
             )
             return np.empty((0, SEQUENCE_LENGTH, FEATURE_DIM), dtype=np.float32)
 
-        frames_arr = np.stack(frame_features, axis=0)   # (N, 13)
+        frames_arr = np.stack(frame_features, axis=0)  # (N, 13)
         return self._sliding_windows(frames_arr)
 
     def _detection_features(
@@ -207,7 +219,7 @@ class SequenceBuilder:
 
         if boxes is not None and len(boxes) > 0:
             cls_ids = boxes.cls.cpu().numpy().astype(int)
-            xyxy = boxes.xyxy.cpu().numpy()   # (N, 4)
+            xyxy = boxes.xyxy.cpu().numpy()  # (N, 4)
 
             for cls_id, box in zip(cls_ids, xyxy):
                 bw = box[2] - box[0]
@@ -228,15 +240,18 @@ class SequenceBuilder:
                     n_signs += 1
 
         # Normalise counts (clip at 10 to keep bounded)
-        return np.array([
-            min(n_vehicles, 10) / 10.0,
-            min(n_pedestrians, 10) / 10.0,
-            min(n_cyclists, 10) / 10.0,
-            min(n_lights, 5) / 5.0,
-            min(n_signs, 3) / 3.0,
-            min(vehicle_prox, 1.0),
-            min(pedestrian_prox, 1.0),
-        ], dtype=np.float32)
+        return np.array(
+            [
+                min(n_vehicles, 10) / 10.0,
+                min(n_pedestrians, 10) / 10.0,
+                min(n_cyclists, 10) / 10.0,
+                min(n_lights, 5) / 5.0,
+                min(n_signs, 3) / 3.0,
+                min(vehicle_prox, 1.0),
+                min(pedestrian_prox, 1.0),
+            ],
+            dtype=np.float32,
+        )
 
     def _sliding_windows(self, frames: np.ndarray) -> np.ndarray:
         """
@@ -252,8 +267,10 @@ class SequenceBuilder:
         windows = []
         for start in range(0, n - SEQUENCE_LENGTH + 1, STEP_SIZE):
             windows.append(frames[start : start + SEQUENCE_LENGTH])
-        return np.stack(windows, axis=0) if windows else np.empty(
-            (0, SEQUENCE_LENGTH, FEATURE_DIM), dtype=np.float32
+        return (
+            np.stack(windows, axis=0)
+            if windows
+            else np.empty((0, SEQUENCE_LENGTH, FEATURE_DIM), dtype=np.float32)
         )
 
 

@@ -236,7 +236,7 @@ function AnomalyModal({ id, onClose }: { id: string; onClose: () => void }) {
               ) : detail ? (
                 <div className="space-y-1.5">
                   <AnomalyTypeBadge type={detail.anomaly_type} />
-                  {detail.detection_metadata?.ambiguous_type && (
+                  {Boolean(detail.detection_metadata?.ambiguous_type) && (
                     <div
                       className="inline-flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider px-2 py-1 rounded"
                       style={{
@@ -666,7 +666,7 @@ export default function AnomaliesPage() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="panel overflow-hidden">
-              <Skeleton className="h-32 w-full rounded-none" style={{ borderRadius: "12px 12px 0 0" }} />
+              <Skeleton className="h-32 w-full rounded-t-xl rounded-b-none" />
               <div className="p-3.5 space-y-2">
                 <Skeleton className="h-4 w-20" />
                 <Skeleton className="h-1.5 w-full" />

@@ -5,7 +5,6 @@ Tests use synthetic data — no video files, no DB connection, no R2 access,
 no YOLOv8 weights required.
 """
 
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -24,16 +23,19 @@ from api.video.sequence_builder import load_dl_features, save_dl_features
 
 # ── build_lstm_model ───────────────────────────────────────────────────────────
 
+
 class TestBuildLstmModel:
     """Verify the AnomalyLSTM architecture."""
 
     def test_returns_nn_module(self) -> None:
         import torch.nn as nn
+
         model = build_lstm_model()
         assert isinstance(model, nn.Module)
 
     def test_forward_shape(self) -> None:
         import torch
+
         model = build_lstm_model()
         model.eval()
         batch = 4
@@ -44,6 +46,7 @@ class TestBuildLstmModel:
 
     def test_forward_single_sample(self) -> None:
         import torch
+
         model = build_lstm_model()
         model.eval()
         x = torch.randn(1, SEQUENCE_LENGTH, FEATURE_DIM)
@@ -54,6 +57,7 @@ class TestBuildLstmModel:
     def test_output_is_logit_not_probability(self) -> None:
         """Raw output can be any real value — sigmoid turns it into prob."""
         import torch
+
         model = build_lstm_model()
         model.eval()
         x = torch.randn(8, SEQUENCE_LENGTH, FEATURE_DIM)
@@ -64,6 +68,7 @@ class TestBuildLstmModel:
 
     def test_custom_dims(self) -> None:
         import torch
+
         model = build_lstm_model(input_dim=8, hidden_dim=32, num_layers=1, dropout=0.0)
         model.eval()
         x = torch.randn(2, 10, 8)
@@ -73,7 +78,6 @@ class TestBuildLstmModel:
 
     def test_bidirectional_output_dim(self) -> None:
         """Check that the FC head receives 2*hidden_dim (bidirectional)."""
-        import torch
         hidden = 64
         model = build_lstm_model(hidden_dim=hidden)
         # Inspect first Linear layer in classifier
@@ -82,6 +86,7 @@ class TestBuildLstmModel:
 
 
 # ── save_dl_features / load_dl_features ───────────────────────────────────────
+
 
 class TestDLFeatureIO:
     """Verify sequence save/load round-trip."""
@@ -119,11 +124,14 @@ class TestDLFeatureIO:
 
 # ── DeepLearningResult ─────────────────────────────────────────────────────────
 
+
 class TestDeepLearningResult:
     def test_default_construction(self) -> None:
         r = DeepLearningResult(
-            clip_id="abc", is_anomaly=True,
-            anomaly_probability=0.85, severity=0.85,
+            clip_id="abc",
+            is_anomaly=True,
+            anomaly_probability=0.85,
+            severity=0.85,
         )
         assert r.clip_id == "abc"
         assert r.is_anomaly is True
@@ -132,8 +140,10 @@ class TestDeepLearningResult:
 
     def test_with_error(self) -> None:
         r = DeepLearningResult(
-            clip_id="abc", is_anomaly=False,
-            anomaly_probability=0.0, severity=0.0,
+            clip_id="abc",
+            is_anomaly=False,
+            anomaly_probability=0.0,
+            severity=0.0,
             error="video too short",
         )
         assert r.error == "video too short"
@@ -141,12 +151,12 @@ class TestDeepLearningResult:
 
 # ── LSTMAnomalyClassifier — predict ───────────────────────────────────────────
 
+
 class TestLSTMAnomalyClassifierPredict:
     """Tests for predict() using a hand-crafted synthetic model."""
 
     def _make_trained_classifier(self, tmp_path: Path) -> LSTMAnomalyClassifier:
         """Return a classifier with random model weights (not trained on data)."""
-        import torch
         model_path = tmp_path / "test_dl_lstm.pt"
         clf = LSTMAnomalyClassifier(model_path=model_path)
         clf._model = build_lstm_model()
@@ -176,6 +186,7 @@ class TestLSTMAnomalyClassifierPredict:
 
     def test_is_anomaly_consistent_with_probability(self, tmp_path: Path) -> None:
         import torch
+
         clf = self._make_trained_classifier(tmp_path)
         # Force model to always predict high probability
         clf._model = build_lstm_model()
@@ -206,6 +217,7 @@ class TestLSTMAnomalyClassifierPredict:
 
     def test_anomaly_windows_structure(self, tmp_path: Path) -> None:
         import torch
+
         clf = self._make_trained_classifier(tmp_path)
         with torch.no_grad():
             for p in clf._model.parameters():
@@ -223,15 +235,21 @@ class TestLSTMAnomalyClassifierPredict:
 
 # ── LSTMAnomalyClassifier — save / load ───────────────────────────────────────
 
+
 class TestLSTMAnomalyClassifierPersistence:
     def test_save_load_roundtrip(self, tmp_path: Path) -> None:
         import torch
+
         model_path = tmp_path / "roundtrip.pt"
         clf = LSTMAnomalyClassifier(model_path=model_path)
         clf._model = build_lstm_model()
-        clf._metadata = {"threshold": DECISION_THRESHOLD, "feature_dim": FEATURE_DIM,
-                         "sequence_length": SEQUENCE_LENGTH, "best_val_f1": 0.5,
-                         "epochs_trained": 3}
+        clf._metadata = {
+            "threshold": DECISION_THRESHOLD,
+            "feature_dim": FEATURE_DIM,
+            "sequence_length": SEQUENCE_LENGTH,
+            "best_val_f1": 0.5,
+            "epochs_trained": 3,
+        }
         clf.save()
 
         clf2 = LSTMAnomalyClassifier(model_path=model_path)
@@ -260,9 +278,13 @@ class TestLSTMAnomalyClassifierPersistence:
         model_path = tmp_path / "meta.pt"
         clf = LSTMAnomalyClassifier(model_path=model_path)
         clf._model = build_lstm_model()
-        clf._metadata = {"threshold": 0.6, "feature_dim": FEATURE_DIM,
-                         "sequence_length": SEQUENCE_LENGTH, "best_val_f1": 0.75,
-                         "epochs_trained": 15}
+        clf._metadata = {
+            "threshold": 0.6,
+            "feature_dim": FEATURE_DIM,
+            "sequence_length": SEQUENCE_LENGTH,
+            "best_val_f1": 0.75,
+            "epochs_trained": 15,
+        }
         clf.save()
         clf2 = LSTMAnomalyClassifier(model_path=model_path)
         clf2.load()

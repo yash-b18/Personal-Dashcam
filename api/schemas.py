@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 # ── Clips / Videos ────────────────────────────────────────────────────────────
 
+
 class ClipSummary(BaseModel):
     id: uuid.UUID
     filename_prefix: str
@@ -22,7 +23,7 @@ class ClipSummary(BaseModel):
     score: float | None = None
     grade: str | None = None
     anomaly_count: int = 0
-    front_url: str | None = None    # presigned R2 URL
+    front_url: str | None = None  # presigned R2 URL
 
     model_config = {"from_attributes": True}
 
@@ -44,6 +45,7 @@ class ClipListResponse(BaseModel):
 
 
 # ── Anomalies ──────────────────────────────────────────────────────────────────
+
 
 class AnomalySummary(BaseModel):
     id: uuid.UUID
@@ -76,6 +78,7 @@ class AnomalyListResponse(BaseModel):
 
 
 # ── Labels ─────────────────────────────────────────────────────────────────────
+
 
 class LabelQueueItem(BaseModel):
     id: uuid.UUID
@@ -110,6 +113,7 @@ class LabelResponse(BaseModel):
 
 
 # ── Scores ─────────────────────────────────────────────────────────────────────
+
 
 class OverallScoreResponse(BaseModel):
     score: float
@@ -149,12 +153,13 @@ class DashboardResponse(BaseModel):
     grade: str
     clips_analyzed: int
     recent_anomaly_count: int
-    clips_with_anomalies: int   # distinct clips with ≥1 detected anomaly
+    clips_with_anomalies: int  # distinct clips with ≥1 detected anomaly
     anomaly_breakdown: list[AnomalyBreakdown]
-    score_trend: list[ClipScoreHistory]   # last N clips for chart
+    score_trend: list[ClipScoreHistory]  # last N clips for chart
 
 
 # ── Processing ─────────────────────────────────────────────────────────────────
+
 
 class ProcessResponse(BaseModel):
     task_id: str

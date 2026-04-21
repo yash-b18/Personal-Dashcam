@@ -52,7 +52,9 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 PROCESSED_DIR = Path("data/processed")
@@ -61,14 +63,14 @@ WEIGHTS_PATH = Path("models/yolov8m.pt")
 # COCO class ids → our feature channel index. Order is locked — keep in sync
 # with yolo_feature_names().
 _CLASS_INDEX = {
-    2:  0,   # car
-    7:  1,   # truck
-    5:  2,   # bus
-    3:  3,   # motorcycle
-    1:  4,   # bicycle
-    0:  5,   # person
-    9:  6,   # traffic light
-    11: 7,   # stop sign
+    2: 0,  # car
+    7: 1,  # truck
+    5: 2,  # bus
+    3: 3,  # motorcycle
+    1: 4,  # bicycle
+    0: 5,  # person
+    9: 6,  # traffic light
+    11: 7,  # stop sign
 }
 _N_CLASSES = len(_CLASS_INDEX)
 
@@ -79,8 +81,16 @@ DEFAULT_IMGSZ = 480  # smaller than 640; accuracy diff on vehicle classes is <1%
 
 def yolo_feature_names() -> list[str]:
     """Ordered names for the 20 YOLO-derived features."""
-    classes = ["car", "truck", "bus", "motorcycle", "bicycle",
-               "person", "traffic_light", "stop_sign"]
+    classes = [
+        "car",
+        "truck",
+        "bus",
+        "motorcycle",
+        "bicycle",
+        "person",
+        "traffic_light",
+        "stop_sign",
+    ]
     names = [f"yolo_{c}_mean" for c in classes]
     names += [f"yolo_{c}_max" for c in classes]
     names += [
@@ -111,10 +121,13 @@ def _check_ffmpeg_nvdec() -> bool:
         return _NVDEC_AVAILABLE
     _NVDEC_CHECKED = True
     import subprocess
+
     try:
         out = subprocess.check_output(
             ["ffmpeg", "-hide_banner", "-hwaccels"],
-            stderr=subprocess.DEVNULL, text=True, timeout=5,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
         )
         _NVDEC_AVAILABLE = "cuda" in out.lower()
     except Exception:
@@ -122,21 +135,36 @@ def _check_ffmpeg_nvdec() -> bool:
     return _NVDEC_AVAILABLE
 
 
-def _sample_frames_nvdec(video_path: Path, target_fps: float,
-                         out_w: int = _DECORD_OUT_W,
-                         out_h: int = _DECORD_OUT_H) -> list[np.ndarray]:
+def _sample_frames_nvdec(
+    video_path: Path,
+    target_fps: float,
+    out_w: int = _DECORD_OUT_W,
+    out_h: int = _DECORD_OUT_H,
+) -> list[np.ndarray]:
     """ffmpeg subprocess with hardware decode (NVDEC) and GPU-side scaling.
     Emits raw BGR bytes which we reshape into frame ndarrays."""
     import subprocess
+
     cmd = [
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-hwaccel", "cuda",
-        "-hwaccel_output_format", "cuda",
-        "-c:v", "h264_cuvid",
-        "-i", str(video_path),
-        "-vf", f"fps={target_fps},scale_cuda={out_w}:{out_h},hwdownload,format=bgr24",
-        "-pix_fmt", "bgr24",
-        "-f", "rawvideo", "-",
+        "ffmpeg",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-hwaccel",
+        "cuda",
+        "-hwaccel_output_format",
+        "cuda",
+        "-c:v",
+        "h264_cuvid",
+        "-i",
+        str(video_path),
+        "-vf",
+        f"fps={target_fps},scale_cuda={out_w}:{out_h},hwdownload,format=bgr24",
+        "-pix_fmt",
+        "bgr24",
+        "-f",
+        "rawvideo",
+        "-",
     ]
     raw = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
     frame_size = out_w * out_h * 3
@@ -152,18 +180,21 @@ def _open_decord(video_path: Path):
     """Open a decord VideoReader, preferring GPU (NVDEC) and forcing a
     downscaled output so we're not hauling 1080p frames through Python."""
     import decord
+
     global _DECORD_CTX_LOGGED
     last_err: Exception | None = None
-    for label, ctx in (("gpu", lambda: decord.gpu(0)),
-                       ("cpu", lambda: decord.cpu(0))):
+    for label, ctx in (("gpu", lambda: decord.gpu(0)), ("cpu", lambda: decord.cpu(0))):
         try:
             vr = decord.VideoReader(
-                str(video_path), ctx=ctx(),
-                width=_DECORD_OUT_W, height=_DECORD_OUT_H,
+                str(video_path),
+                ctx=ctx(),
+                width=_DECORD_OUT_W,
+                height=_DECORD_OUT_H,
             )
             if not _DECORD_CTX_LOGGED:
-                logger.info("  decord ctx=%s output=%dx%d", label,
-                            _DECORD_OUT_W, _DECORD_OUT_H)
+                logger.info(
+                    "  decord ctx=%s output=%dx%d", label, _DECORD_OUT_W, _DECORD_OUT_H
+                )
                 _DECORD_CTX_LOGGED = True
             return vr
         except Exception as exc:
@@ -227,19 +258,23 @@ def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
         except Exception as exc:
             # h264_cuvid codec isn't in Colab's stock ffmpeg even though
             # `-hwaccels` lists cuda. Disable permanently to stop per-clip retries.
-            logger.warning("NVDEC decode failed (%s) — disabling NVDEC for this run.",
-                           exc)
+            logger.warning(
+                "NVDEC decode failed (%s) — disabling NVDEC for this run.", exc
+            )
             _NVDEC_AVAILABLE = False
             _SAMPLER_LOGGED = False
     try:
         import decord  # noqa: F401
+
         if not _SAMPLER_LOGGED:
             logger.info("  frame sampler: decord %s", decord.__version__)
             _SAMPLER_LOGGED = True
         return _sample_frames_decord(video_path, target_fps)
     except ImportError:
         if not _SAMPLER_LOGGED:
-            logger.warning("  frame sampler: cv2 fallback — install `decord` for faster decode")
+            logger.warning(
+                "  frame sampler: cv2 fallback — install `decord` for faster decode"
+            )
             _SAMPLER_LOGGED = True
         return _sample_frames_cv2(video_path, target_fps)
 
@@ -264,14 +299,18 @@ def _aggregate(detections: list[dict], frame_area: float) -> np.ndarray:
                 max_area_per_frame[i] = bbox_area
 
     vec[0:_N_CLASSES] = counts.mean(axis=0)
-    vec[_N_CLASSES:2 * _N_CLASSES] = counts.max(axis=0)
+    vec[_N_CLASSES : 2 * _N_CLASSES] = counts.max(axis=0)
 
     # Scene summaries (indices after the count block)
     max_bbox_ratio = float(max_area_per_frame.max() / max(frame_area, 1.0))
     vec[2 * _N_CLASSES + 0] = max_bbox_ratio
-    vec[2 * _N_CLASSES + 1] = float((counts[:, _CLASS_INDEX[9]] > 0).mean())   # traffic_light
-    vec[2 * _N_CLASSES + 2] = float((counts[:, _CLASS_INDEX[11]] > 0).mean())  # stop_sign
-    vec[2 * _N_CLASSES + 3] = float((counts[:, _CLASS_INDEX[0]] > 0).mean())   # person
+    vec[2 * _N_CLASSES + 1] = float(
+        (counts[:, _CLASS_INDEX[9]] > 0).mean()
+    )  # traffic_light
+    vec[2 * _N_CLASSES + 2] = float(
+        (counts[:, _CLASS_INDEX[11]] > 0).mean()
+    )  # stop_sign
+    vec[2 * _N_CLASSES + 3] = float((counts[:, _CLASS_INDEX[0]] > 0).mean())  # person
 
     return vec
 
@@ -289,8 +328,12 @@ def _predict_on_frames(
     frame_area = float(frames[0].shape[0] * frames[0].shape[1])
     use_half = bool(device and device.startswith("cuda"))
     results = model.predict(
-        frames, imgsz=imgsz, conf=conf, device=device,
-        half=use_half, verbose=False,
+        frames,
+        imgsz=imgsz,
+        conf=conf,
+        device=device,
+        half=use_half,
+        verbose=False,
     )
     per_frame: list = []
     for r in results:
@@ -345,14 +388,20 @@ def _warmup_model(model, imgsz: int, device: str | None) -> None:
     logger.info("  warmup predict: %.2fs", time.perf_counter() - t0)
 
 
-def save_yolo_features(clip_id: str, vec: np.ndarray, out_dir: Path = PROCESSED_DIR) -> Path:
+def save_yolo_features(
+    clip_id: str, vec: np.ndarray, out_dir: Path = PROCESSED_DIR
+) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{clip_id}_yolo.npz"
-    np.savez_compressed(path, yolo_features=vec, feature_names=np.array(yolo_feature_names()))
+    np.savez_compressed(
+        path, yolo_features=vec, feature_names=np.array(yolo_feature_names())
+    )
     return path
 
 
-def load_yolo_features(clip_id: str, processed_dir: Path = PROCESSED_DIR) -> np.ndarray | None:
+def load_yolo_features(
+    clip_id: str, processed_dir: Path = PROCESSED_DIR
+) -> np.ndarray | None:
     path = processed_dir / f"{clip_id}_yolo.npz"
     if not path.exists():
         return None
@@ -366,37 +415,63 @@ def load_yolo_features(clip_id: str, processed_dir: Path = PROCESSED_DIR) -> np.
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     src = p.add_mutually_exclusive_group()
-    src.add_argument("--all", action="store_true", help="Process all labeled clips from DB.")
+    src.add_argument(
+        "--all", action="store_true", help="Process all labeled clips from DB."
+    )
     src.add_argument("--clip-id", type=str, help="Single clip UUID from DB.")
-    src.add_argument("--input-dir", type=Path,
-                     help="Offline mode: process every .mp4 in this dir. "
-                          "Output is keyed by the filename stem.")
-    src.add_argument("--manifest", type=Path,
-                     help="Colab mode: read a JSON list of {clip_id, r2_key_front} "
-                          "and pull each clip from R2 using env-var credentials. "
-                          "No DB access required.")
+    src.add_argument(
+        "--input-dir",
+        type=Path,
+        help="Offline mode: process every .mp4 in this dir. "
+        "Output is keyed by the filename stem.",
+    )
+    src.add_argument(
+        "--manifest",
+        type=Path,
+        help="Colab mode: read a JSON list of {clip_id, r2_key_front} "
+        "and pull each clip from R2 using env-var credentials. "
+        "No DB access required.",
+    )
     p.add_argument("--output-dir", type=Path, default=PROCESSED_DIR)
     p.add_argument("--weights", type=Path, default=WEIGHTS_PATH)
     p.add_argument("--imgsz", type=int, default=DEFAULT_IMGSZ)
-    p.add_argument("--device", type=str, default=None,
-                   help="'cuda', 'mps', 'cpu'. If omitted, ultralytics auto-selects.")
+    p.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="'cuda', 'mps', 'cpu'. If omitted, ultralytics auto-selects.",
+    )
     p.add_argument("--force", action="store_true")
-    p.add_argument("--download-workers", type=int, default=8,
-                   help="Parallel R2 download threads in --manifest mode (default 8).")
-    p.add_argument("--prefetch", type=int, default=16,
-                   help="Max clips buffered on disk ahead of GPU (default 16).")
+    p.add_argument(
+        "--download-workers",
+        type=int,
+        default=8,
+        help="Parallel R2 download threads in --manifest mode (default 8).",
+    )
+    p.add_argument(
+        "--prefetch",
+        type=int,
+        default=16,
+        help="Max clips buffered on disk ahead of GPU (default 16).",
+    )
     return p.parse_args()
 
 
 def _load_model(weights: Path, device: str | None):
     import torch
     from ultralytics import YOLO
+
     logger.info("Loading YOLOv8 weights from %s (device=%s)", weights, device or "auto")
-    logger.info("  torch.cuda.is_available=%s cuda.device_count=%d",
-                torch.cuda.is_available(), torch.cuda.device_count())
+    logger.info(
+        "  torch.cuda.is_available=%s cuda.device_count=%d",
+        torch.cuda.is_available(),
+        torch.cuda.device_count(),
+    )
     if device and device.startswith("cuda") and not torch.cuda.is_available():
-        logger.warning("Requested device=%s but CUDA is not available — falling back to CPU.",
-                       device)
+        logger.warning(
+            "Requested device=%s but CUDA is not available — falling back to CPU.",
+            device,
+        )
     # cudnn benchmark picks the fastest conv algorithm for a given input shape
     # and reuses it on subsequent calls — valuable here since every clip hits
     # the same imgsz.
@@ -408,8 +483,11 @@ def _load_model(weights: Path, device: str | None):
     # reports cpu, ultralytics silently ignored the .to() call.
     try:
         first_param = next(model.model.parameters())
-        logger.info("  model weights on device=%s dtype=%s",
-                    first_param.device, first_param.dtype)
+        logger.info(
+            "  model weights on device=%s dtype=%s",
+            first_param.device,
+            first_param.dtype,
+        )
     except Exception:
         pass
     return model
@@ -442,7 +520,9 @@ def _run_from_db(args: argparse.Namespace, model) -> None:
         tmp = None
         try:
             tmp = r2.download_to_temp(clip.r2_key_front)
-            vec = extract_yolo_features(tmp, model, imgsz=args.imgsz, device=args.device)
+            vec = extract_yolo_features(
+                tmp, model, imgsz=args.imgsz, device=args.device
+            )
             save_yolo_features(str(clip.id), vec, out_dir=args.output_dir)
             extracted += 1
         except Exception as exc:
@@ -470,7 +550,7 @@ def _run_from_dir(args: argparse.Namespace, model) -> None:
     extracted = skipped = failed = 0
 
     for v in tqdm(videos, desc="YOLO features", unit="clip"):
-        stem = v.stem   # expected to be the clip UUID when files are named <clip_id>.mp4
+        stem = v.stem  # expected to be the clip UUID when files are named <clip_id>.mp4
         out = args.output_dir / f"{stem}_yolo.npz"
         if out.exists() and not args.force:
             skipped += 1
@@ -518,11 +598,14 @@ def _download_clip(client, bucket: str, key: str) -> Path:
     """Single-threaded download (boto3's multipart TransferManager spawns
     10+ internal threads per file, overflowing the connection pool)."""
     from boto3.s3.transfer import TransferConfig
+
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     try:
         client.download_fileobj(
-            bucket, key, tmp,
-            Config=TransferConfig(use_threads=False, multipart_threshold=1024 ** 4),
+            bucket,
+            key,
+            tmp,
+            Config=TransferConfig(use_threads=False, multipart_threshold=1024**4),
         )
     finally:
         tmp.close()
@@ -588,16 +671,20 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
     n_debug = 5
     with ThreadPoolExecutor(max_workers=args.download_workers) as pool:
         futures = [pool.submit(_download_and_decode, e) for e in pending]
-        pbar = tqdm(as_completed(futures), total=len(pending),
-                    desc="YOLO features", unit="clip")
+        pbar = tqdm(
+            as_completed(futures), total=len(pending), desc="YOLO features", unit="clip"
+        )
         for fut in pbar:
             try:
                 item = fut.result()
                 clip_id = item["clip_id"]
                 t2 = time.perf_counter()
                 vec = _predict_on_frames(
-                    item["frames"], model,
-                    conf=CONF_THRESHOLD, imgsz=args.imgsz, device=args.device,
+                    item["frames"],
+                    model,
+                    conf=CONF_THRESHOLD,
+                    imgsz=args.imgsz,
+                    device=args.device,
                 )
                 predict_s = time.perf_counter() - t2
                 save_yolo_features(clip_id, vec, out_dir=args.output_dir)
@@ -606,8 +693,11 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
                     logger.info(
                         "  [timing %d] dl=%.2fs decode=%.2fs predict=%.2fs "
                         "(%d frames, queued)",
-                        extracted, item["dl_s"], item["decode_s"],
-                        predict_s, len(item["frames"]),
+                        extracted,
+                        item["dl_s"],
+                        item["decode_s"],
+                        predict_s,
+                        len(item["frames"]),
                     )
             except Exception as exc:
                 logger.error("Failed: %s", exc)
@@ -619,15 +709,18 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
     logger.info("  Extracted: %d", extracted)
     logger.info("  Skipped:   %d", skipped)
     logger.info("  Failed:    %d", failed)
-    logger.info("  Workers:   %d dl+decode / prefetch=%d",
-                args.download_workers, args.prefetch)
+    logger.info(
+        "  Workers:   %d dl+decode / prefetch=%d", args.download_workers, args.prefetch
+    )
     logger.info("  Output:    %s/", args.output_dir)
 
 
 def main() -> None:
     args = parse_args()
     if not any([args.all, args.clip_id, args.input_dir, args.manifest]):
-        logger.error("Specify --all, --clip-id <UUID>, --input-dir <path>, or --manifest <json>")
+        logger.error(
+            "Specify --all, --clip-id <UUID>, --input-dir <path>, or --manifest <json>"
+        )
         sys.exit(1)
 
     model = _load_model(args.weights, args.device)

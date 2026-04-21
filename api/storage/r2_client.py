@@ -107,7 +107,9 @@ class R2Client:
             logger.debug("Downloading R2 object: %s", key)
             self._client.download_fileobj(self._bucket, key, tmp)
             tmp.flush()
-            logger.debug("Downloaded to %s (%d bytes)", tmp.name, Path(tmp.name).stat().st_size)
+            logger.debug(
+                "Downloaded to %s (%d bytes)", tmp.name, Path(tmp.name).stat().st_size
+            )
             return Path(tmp.name)
         except ClientError as exc:
             Path(tmp.name).unlink(missing_ok=True)
@@ -118,7 +120,9 @@ class R2Client:
 
     # ── Upload ────────────────────────────────────────────────────────
 
-    def upload_fileobj(self, fileobj, key: str, content_type: str = "video/mp4") -> None:
+    def upload_fileobj(
+        self, fileobj, key: str, content_type: str = "video/mp4"
+    ) -> None:
         """
         Upload a file-like object to R2 under the given key.
 
