@@ -1,0 +1,121 @@
+# ── DashcamIQ — Render deployment blueprint ───────────────────────────────────
+#
+# Deploys the full backend stack on Render:
+#   - dashcamiq-api      (FastAPI web service, Docker)
+#   - dashcamiq-worker   (Celery worker, Docker)
+#   - dashcamiq-db       (managed Postgres)
+#   - dashcamiq-redis    (managed Redis)
+#
+# Setup:
+#   1. Push this file to main on GitHub.
+#   2. render.com → New → Blueprint → pick this repo.
+#   3. Render reads this file and provisions all four services.
+#   4. In each service's Environment tab, paste the secret vars at the bottom
+#      of this file (the ones marked `sync: false`). Render won't deploy until
+#      those are set.
+#   5. Auto-deploys from main on every push.
+#
+# ────────────────────────────────────────────────────────────────────────────────
+
+databases:
+  - name: dashcamiq-db
+    databaseName: dashcamiq
+    user: dashcam
+    plan: free
+
+services:
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  - type: redis
+    name: dashcamiq-redis
+    plan: free
+    ipAllowList: []   # private-network only
+
+  # ── FastAPI API ────────────────────────────────────────────────────────────
+  - type: web
+    name: dashcamiq-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    # Override Dockerfile CMD to run alembic before uvicorn + bind to Render's $PORT
+    dockerCommand: >
+      sh -c "alembic upgrade head &&
+      uvicorn app:app --host 0.0.0.0 --port $PORT --workers 1"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dashcamiq-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: dashcamiq-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: APP_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        sync: false   # set to your Vercel URL, e.g. https://dashcamiq.vercel.app
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_URL
+        sync: false
+      - key: R2_MAIN_FOLDER
+        sync: false
+      - key: R2_FRONT_FOLDER
+        value: Front
+      - key: R2_REAR_FOLDER
+        value: Rear
+
+  # ── Celery Worker ──────────────────────────────────────────────────────────
+  - type: worker
+    name: dashcamiq-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile.worker
+    plan: starter
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dashcamiq-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: dashcamiq-redis
+          property: connectionString
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: dashcamiq-api
+          envVarKey: SECRET_KEY
+      - key: APP_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_URL
+        sync: false
+      - key: R2_MAIN_FOLDER
+        sync: false
+      - key: R2_FRONT_FOLDER
+        value: Front
+      - key: R2_REAR_FOLDER
+        value: Rear
