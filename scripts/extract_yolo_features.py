@@ -327,7 +327,13 @@ def _make_r2_client_from_env():
         aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
         region_name="auto",
-        config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "adaptive"}),
+        config=Config(
+            signature_version="s3v4",
+            retries={"max_attempts": 3, "mode": "adaptive"},
+            # Must exceed --download-workers or urllib3 keeps opening/closing
+            # connections on pool overflow — slows each download by a TLS RTT.
+            max_pool_connections=64,
+        ),
     )
     return client, bucket
 
