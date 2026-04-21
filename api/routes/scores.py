@@ -79,13 +79,19 @@ def get_score_history(
 
 @router.get("/dashboard", response_model=DashboardResponse)
 def get_dashboard(
-    trend_limit: int = Query(30, ge=5, le=100),
+    trend_limit: int = Query(30, ge=5, le=1000),
     db: Session = Depends(get_db),
 ) -> DashboardResponse:
     """All data needed for the driver dashboard in a single request."""
     overall = get_overall_score(db=db)
 
     recent_count = db.query(Anomaly).filter(Anomaly.model_type == _MODEL).count()
+    clips_with_anomalies = (
+        db.query(Anomaly.clip_id)
+        .filter(Anomaly.model_type == _MODEL)
+        .distinct()
+        .count()
+    )
     breakdown_rows = (
         db.query(
             Anomaly.anomaly_type,
@@ -112,6 +118,7 @@ def get_dashboard(
         grade=overall.grade,
         clips_analyzed=overall.clips_analyzed,
         recent_anomaly_count=recent_count,
+        clips_with_anomalies=clips_with_anomalies,
         anomaly_breakdown=breakdown,
         score_trend=trend.history,
     )

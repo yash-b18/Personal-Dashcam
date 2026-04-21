@@ -8,7 +8,7 @@ import {
 } from "recharts";
 import {
   AlertTriangle, TrendingUp, Film, ChevronRight, Activity,
-  RefreshCw, ChevronLeft, Zap,
+  RefreshCw, Zap,
 } from "lucide-react";
 
 import { api, DashboardResponse, AnomalyBreakdown, AnomalySummary, ClipScoreHistory } from "@/lib/api";
@@ -59,13 +59,25 @@ function StatCard({ label, value, icon: Icon, color, delay = 0 }: {
 }
 
 // ── Score tooltip ─────────────────────────────────────────────────────────────
-function ScoreTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) {
+function ScoreTooltip({
+  active, payload, label,
+}: {
+  active?: boolean;
+  payload?: { value: number; payload?: { trips?: number } }[];
+  label?: string;
+}) {
   if (!active || !payload?.length) return null;
   const score = payload[0].value;
+  const trips = payload[0].payload?.trips;
   return (
     <div className="panel-sm px-3 py-2 text-[11px] font-mono">
       <div style={{ color: "var(--color-ink-tertiary)", marginBottom: "2px" }}>{label}</div>
       <div style={{ color: scoreToColor(score), fontWeight: 600 }}>{score.toFixed(1)}</div>
+      {trips != null && (
+        <div style={{ color: "var(--color-ink-tertiary)", marginTop: "2px", fontSize: "9px" }}>
+          avg of {trips} {trips === 1 ? "trip" : "trips"}
+        </div>
+      )}
     </div>
   );
 }
@@ -161,37 +173,31 @@ function TripRow({ trip, index }: { trip: ClipScoreHistory; index: number }) {
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [topAnomalies, setTopAnomalies] = useState<AnomalySummary[]>([]);
-  const [historyPage, setHistoryPage] = useState(1);
-  const [historyData, setHistoryData] = useState<ClipScoreHistory[]>([]);
-  const [historyTotal, setHistoryTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [recalcLoading, setRecalcLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const HISTORY_PAGE_SIZE = 10;
-
   const loadDashboard = useCallback(() => {
     setLoading(true);
     Promise.all([
-      api.scores.dashboard(),
-      api.anomalies.list({ page_size: 5, min_severity: 0.5 }),
+      // Wide window so the date-aggregator can reach ≥7 distinct days even when
+      // uploads cluster heavily on the same calendar day.
+      api.scores.dashboard({ trend_limit: 500 }),
+      // Fetch a wider pool of high-severity events, then pick the top 3 by score impact client-side.
+      api.anomalies.list({ page_size: 20, min_severity: 0.5 }),
     ])
       .then(([dash, anom]) => {
         setData(dash);
-        setTopAnomalies(anom.anomalies);
+        const top3 = [...anom.anomalies]
+          .sort((a, b) => b.score_impact - a.score_impact)
+          .slice(0, 3);
+        setTopAnomalies(top3);
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
-  const loadHistory = useCallback(() => {
-    api.scores.history({ page: historyPage, page_size: HISTORY_PAGE_SIZE })
-      .then(r => { setHistoryData(r.history); setHistoryTotal(r.total); })
-      .catch(() => {});
-  }, [historyPage]);
-
   useEffect(() => { loadDashboard(); }, [loadDashboard]);
-  useEffect(() => { if (data) loadHistory(); }, [data, loadHistory]);
 
   const handleRecalculate = async () => {
     setRecalcLoading(true);
@@ -206,10 +212,24 @@ export default function DashboardPage() {
   if (loading) return <DashboardSkeleton />;
   if (error || !data) return <ErrorState message={error ?? "Failed to load dashboard"} />;
 
-  const trendData = [...data.score_trend].reverse().map(h => ({
-    label: formatDateShort(h.recorded_at),
-    score: Math.round(h.score),
-  }));
+  // Aggregate per-clip scores into a per-date average, then keep the last 7 distinct days.
+  const byDate = new Map<string, { sum: number; count: number }>();
+  for (const h of data.score_trend) {
+    if (!h.recorded_at) continue;
+    const dateKey = h.recorded_at.slice(0, 10); // YYYY-MM-DD
+    const entry = byDate.get(dateKey) ?? { sum: 0, count: 0 };
+    entry.sum += h.score;
+    entry.count += 1;
+    byDate.set(dateKey, entry);
+  }
+  const trendData = Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-7)
+    .map(([dateKey, { sum, count }]) => ({
+      label: formatDateShort(`${dateKey}T00:00:00Z`),
+      score: Math.round(sum / count),
+      trips: count,
+    }));
 
   const donutData = data.anomaly_breakdown.map((b: AnomalyBreakdown) => ({
     name: anomalyLabel(b.anomaly_type),
@@ -218,7 +238,10 @@ export default function DashboardPage() {
   }));
 
   const mainColor = scoreToColor(data.overall_score);
-  const historyPages = Math.max(1, Math.ceil(historyTotal / HISTORY_PAGE_SIZE));
+
+  // score_trend is ASC by recorded_at; reverse and take first 5 to get the
+  // most-recent trips without needing a separate paginated history endpoint.
+  const recentTrips = [...data.score_trend].reverse().slice(0, 5);
 
   return (
     <div className="p-8 max-w-[1400px]">
@@ -252,8 +275,26 @@ export default function DashboardPage() {
           <div className="absolute inset-0 pointer-events-none"
                style={{ background: `radial-gradient(ellipse at 50% 30%, ${mainColor}12 0%, transparent 65%)` }} />
           <p className="section-label mb-6 self-start w-full">Overall Score</p>
-          <ScoreGauge score={Math.round(data.overall_score)} grade={data.grade} size={210} animated />
-          <div className="mt-5 grid grid-cols-2 gap-3 w-full">
+          <ScoreGauge score={data.overall_score} grade={data.grade} size={210} animated />
+
+          {/* Flagged-rate caveat — without this, an overall of 99.7 just reads as a perfect 100. */}
+          {data.clips_analyzed > 0 && (
+            <p
+              className="mt-10 font-mono text-[10px] tracking-[0.08em] text-center"
+              style={{ color: "var(--color-ink-tertiary)" }}
+            >
+              <span style={{ color: "#F43F5E", fontWeight: 600 }}>{data.clips_with_anomalies}</span>
+              {" "}of{" "}
+              <span style={{ color: "var(--color-ink-primary)" }}>{data.clips_analyzed}</span>
+              {" "}trips flagged
+              {" · "}
+              <span style={{ color: "#10B981" }}>
+                {(100 * (1 - data.clips_with_anomalies / data.clips_analyzed)).toFixed(1)}% clean
+              </span>
+            </p>
+          )}
+
+          <div className="mt-4 grid grid-cols-2 gap-3 w-full">
             {[
               { label: "Trips", value: data.clips_analyzed, color: undefined },
               { label: "Anomalies", value: data.recent_anomaly_count, color: "#F43F5E" },
@@ -279,7 +320,9 @@ export default function DashboardPage() {
           {trendData.length > 0 ? (
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.25, duration: 0.4 }} className="panel p-5 flex-1">
-              <p className="section-label mb-4">Score Trend · Last {trendData.length} trips</p>
+              <p className="section-label mb-4">
+                Score Trend · Avg per day · Last {trendData.length} {trendData.length === 1 ? "day" : "days"}
+              </p>
               <ResponsiveContainer width="100%" height={155}>
                 <AreaChart data={trendData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                   <defs>
@@ -382,15 +425,15 @@ export default function DashboardPage() {
         </motion.div>
       </div>
 
-      {/* Row 3: Full trip history table */}
-      {historyData.length > 0 && (
+      {/* Row 3: Recent 5 trips */}
+      {recentTrips.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4, duration: 0.4 }} className="panel overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4"
                style={{ borderBottom: "1px solid var(--color-border)" }}>
-            <p className="section-label">Trip History</p>
+            <p className="section-label">Trip History · Most Recent</p>
             <span className="font-mono text-[10px]" style={{ color: "var(--color-ink-tertiary)" }}>
-              {historyTotal} scored trips
+              Latest {recentTrips.length} trips
             </span>
           </div>
           <table className="w-full">
@@ -402,27 +445,9 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {historyData.map((trip, i) => <TripRow key={trip.clip_id} trip={trip} index={i} />)}
+              {recentTrips.map((trip, i) => <TripRow key={trip.clip_id} trip={trip} index={i} />)}
             </tbody>
           </table>
-
-          {/* Pagination */}
-          {historyPages > 1 && (
-            <div className="flex items-center justify-center gap-3 py-4"
-                 style={{ borderTop: "1px solid var(--color-border)" }}>
-              <button onClick={() => setHistoryPage(p => Math.max(1, p - 1))} disabled={historyPage === 1}
-                className="w-8 h-8 flex items-center justify-center panel-sm disabled:opacity-30">
-                <ChevronLeft size={14} />
-              </button>
-              <span className="font-mono text-[11px]" style={{ color: "var(--color-ink-secondary)" }}>
-                {historyPage} / {historyPages}
-              </span>
-              <button onClick={() => setHistoryPage(p => Math.min(historyPages, p + 1))} disabled={historyPage === historyPages}
-                className="w-8 h-8 flex items-center justify-center panel-sm disabled:opacity-30">
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          )}
         </motion.div>
       )}
     </div>

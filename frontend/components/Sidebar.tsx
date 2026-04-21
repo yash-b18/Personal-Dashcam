@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   AlertTriangle,
   Video,
-  Tag,
   Activity,
   Zap,
 } from "lucide-react";
@@ -33,13 +32,6 @@ const NAV_ITEMS = [
     sublabel: "All recorded clips",
     icon: Video,
     shortcut: "⌘3",
-  },
-  {
-    href: "/admin/label",
-    label: "Label Queue",
-    sublabel: "Ground truth",
-    icon: Tag,
-    shortcut: "⌘4",
   },
 ];
 
@@ -94,7 +86,7 @@ export function Sidebar() {
             }} />
           </div>
 
-          <div>
+          <div style={{ flex: 1, minWidth: 0 }}>
             {/* Gradient wordmark */}
             <div style={{
               fontFamily: "var(--font-jakarta)", fontWeight: 800, fontSize: "15px",
@@ -105,8 +97,9 @@ export function Sidebar() {
               DashcamIQ
             </div>
             <div style={{
-              fontFamily: "var(--font-mono)", fontSize: "8px", letterSpacing: "0.2em",
-              color: "rgba(61,90,128,0.65)", marginTop: "2px", textTransform: "uppercase",
+              fontFamily: "var(--font-mono)", fontSize: "7px", letterSpacing: "0.12em",
+              color: "rgba(61,90,128,0.65)", marginTop: "3px", textTransform: "uppercase",
+              whiteSpace: "nowrap",
             }}>
               Anomaly Detection
             </div>
@@ -260,30 +253,6 @@ export function Sidebar() {
 
       {/* ── Status footer ────────────────────────────────── */}
       <div style={{ padding: "14px 18px 18px" }}>
-        {/* Live indicator */}
-        <div style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "10px" }}>
-          <div style={{ position: "relative", width: "8px", height: "8px", flexShrink: 0 }}>
-            {/* Ping ring */}
-            <div style={{
-              position: "absolute", inset: "-3px",
-              borderRadius: "50%", border: "1px solid rgba(16,185,129,0.35)",
-              animation: "status-ping 2.5s ease-out infinite",
-            }} />
-            <div style={{
-              width: "8px", height: "8px", borderRadius: "50%",
-              background: "#10B981",
-              boxShadow: "0 0 8px rgba(16,185,129,0.8)",
-            }} />
-          </div>
-          <span style={{
-            fontFamily: "var(--font-mono)", fontSize: "9px",
-            letterSpacing: "0.15em", color: "#10B981", textTransform: "uppercase",
-          }}>
-            System Online
-          </span>
-        </div>
-
-        {/* Metadata */}
         <div style={{
           display: "flex", alignItems: "center", gap: "6px",
           fontFamily: "var(--font-mono)", fontSize: "8px",

@@ -49,6 +49,22 @@ def list_anomalies(
         .all()
     )
 
+    # Presign one front_url per unique clip so thumbnails can render in the grid.
+    # Dedup avoids regenerating N URLs for N anomalies from the same clip.
+    clip_ids = {a.clip_id for a in rows}
+    front_urls: dict[uuid.UUID, str | None] = {cid: None for cid in clip_ids}
+    if clip_ids:
+        clips = db.query(Clip).filter(Clip.id.in_(clip_ids)).all()
+        try:
+            r2 = R2Client()
+            for clip in clips:
+                try:
+                    front_urls[clip.id] = r2.presigned_url(clip.r2_key_front, expires_in=3600)
+                except Exception:
+                    front_urls[clip.id] = None
+        except Exception:
+            pass
+
     return AnomalyListResponse(
         anomalies=[
             AnomalySummary(
@@ -63,6 +79,7 @@ def list_anomalies(
                 score_impact=a.score_impact,
                 ai_explanation=a.ai_explanation,
                 detected_at=a.detected_at,
+                front_url=front_urls.get(a.clip_id),
             )
             for a in rows
         ],

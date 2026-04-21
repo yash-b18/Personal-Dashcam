@@ -59,12 +59,12 @@ export interface AnomalySummary {
   score_impact: number;
   ai_explanation: string | null;
   detected_at: string;
+  front_url: string | null;
 }
 
 export interface AnomalyDetail extends AnomalySummary {
   detection_metadata: Record<string, unknown> | null;
   clip_filename: string | null;
-  front_url: string | null;
   rear_url: string | null;
 }
 
@@ -137,6 +137,7 @@ export interface DashboardResponse {
   grade: string;
   clips_analyzed: number;
   recent_anomaly_count: number;
+  clips_with_anomalies: number;
   anomaly_breakdown: AnomalyBreakdown[];
   score_trend: ClipScoreHistory[];
 }
@@ -227,7 +228,12 @@ export const api = {
       if (params?.page_size) q.set("page_size", String(params.page_size));
       return request<ScoreHistoryResponse>(`/scores/history?${q}`);
     },
-    dashboard: () => request<DashboardResponse>("/scores/dashboard"),
+    dashboard: (params?: { trend_limit?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.trend_limit) q.set("trend_limit", String(params.trend_limit));
+      const qs = q.toString();
+      return request<DashboardResponse>(`/scores/dashboard${qs ? `?${qs}` : ""}`);
+    },
     recalculate: () => request<{ message: string; clips_scored: number }>("/scores/recalculate", { method: "POST" }),
   },
 
