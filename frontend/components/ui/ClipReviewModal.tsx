@@ -787,18 +787,23 @@ function VerdictCard({
 }
 
 // ── AnomalyRow ────────────────────────────────────────────────────────────────
-// Anomaly type gets its own full-width line with natural wrapping so long
-// labels (e.g. "aggressive lane change") never truncate. Metadata row below
-// carries timestamp + model + severity.
+// Two stacked lines. Line 1: index badge + type label on a block-level div
+// that wraps freely (long labels like "AGGRESSIVE LANE CHANGE" never truncate
+// or get clipped). Line 2: timestamp + severity readout.
 function AnomalyRow({ anomaly, index }: { anomaly: AnomalySummary; index: number }) {
   const severityColor = anomaly.severity >= 0.7 ? "#F43F5E" : anomaly.severity >= 0.4 ? "#F59E0B" : "#22D3EE";
   return (
     <div
-      className="flex flex-col gap-1.5 py-2 px-3 rounded"
-      style={{ background: "rgba(12,25,40,0.5)", border: "1px solid rgba(28,45,68,0.6)", minWidth: 0 }}
+      className="py-2 px-3 rounded"
+      style={{
+        background: "rgba(12,25,40,0.5)",
+        border: "1px solid rgba(28,45,68,0.6)",
+        minWidth: 0,
+        maxWidth: "100%",
+      }}
     >
-      {/* Line 1 — index + type (wraps if long) */}
-      <div className="flex items-start gap-2.5 min-w-0">
+      {/* Line 1 — index + type (type wraps freely) */}
+      <div className="flex items-start gap-2.5" style={{ minWidth: 0 }}>
         <div
           className="font-mono text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded flex-shrink-0"
           style={{
@@ -809,19 +814,24 @@ function AnomalyRow({ anomaly, index }: { anomaly: AnomalySummary; index: number
         >
           {String(index).padStart(2, "0")}
         </div>
-        <span
-          className="font-mono text-[11px] uppercase tracking-[0.12em] min-w-0 flex-1"
+        <div
+          className="font-mono text-[11px] uppercase"
           style={{
             color: severityColor,
+            letterSpacing: "0.06em",
+            flex: "1 1 0%",
+            minWidth: 0,
+            whiteSpace: "normal",
             wordBreak: "break-word",
             overflowWrap: "anywhere",
+            lineHeight: 1.35,
           }}
         >
           {anomaly.anomaly_type.replace(/_/g, " ")}
-        </span>
+        </div>
       </div>
       {/* Line 2 — time + severity */}
-      <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+      <div className="flex items-center gap-2 flex-wrap mt-1.5" style={{ paddingLeft: 34 }}>
         <span
           className="font-mono text-[10px] tabular-nums flex-shrink-0"
           style={{ color: "var(--color-ink-secondary)" }}

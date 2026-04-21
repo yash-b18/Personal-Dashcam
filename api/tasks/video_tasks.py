@@ -25,6 +25,107 @@ from api.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+def _probe_duration_seconds(video_path: str | Path) -> float | None:
+    """Return the video's duration in seconds using OpenCV (frames / fps).
+
+    Returns None on any probing failure — callers must fall back gracefully.
+    """
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        if not cap.isOpened():
+            return None
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        if fps <= 0 or frames <= 0:
+            return None
+        return float(frames / fps)
+    finally:
+        cap.release()
+
+
+def _locate_peak_window(
+    video_path: str | Path,
+    window_seconds: float = 5.0,
+    stride_seconds: float = 1.0,
+) -> tuple[float, float] | None:
+    """Locate the time window with the highest average optical-flow magnitude.
+
+    The classical classifier runs at the whole-clip level (binary yes/no), so
+    it doesn't tell us *when* within the clip the event happens. This helper
+    re-scans the already-downloaded video with a downsampled optical-flow
+    pass and picks the sliding window with peak magnitude. Used to populate
+    the anomaly's (timestamp_start, timestamp_end) so the UI can seek to
+    the event instead of playing the whole clip.
+
+    Returns None on any failure so the caller can fall back to whole-clip
+    timestamps.
+    """
+    import cv2
+    import numpy as np
+
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        if not cap.isOpened():
+            return None
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        if fps <= 0:
+            return None
+
+        # Subsample at ~10 fps for speed — we only need coarse motion signal.
+        target_fps = 10.0
+        stride_frames = max(1, int(round(fps / target_fps)))
+        fb_params = dict(pyr_scale=0.5, levels=2, winsize=15, iterations=2, poly_n=5, poly_sigma=1.2, flags=0)
+
+        prev_gray = None
+        magnitudes: list[float] = []
+        idx = -1
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            idx += 1
+            if idx % stride_frames != 0:
+                continue
+            h, w = frame.shape[:2]
+            if w > 320:
+                frame = cv2.resize(frame, (320, int(h * 320 / w)), interpolation=cv2.INTER_AREA)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if prev_gray is not None:
+                flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, None, **fb_params)
+                mag = float(np.mean(np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)))
+                magnitudes.append(mag)
+            prev_gray = gray
+    finally:
+        cap.release()
+
+    if len(magnitudes) < 2:
+        return None
+
+    # Each magnitude entry represents 1/target_fps seconds
+    sec_per_sample = 1.0 / target_fps
+    w_samples = max(1, int(round(window_seconds / sec_per_sample)))
+    s_samples = max(1, int(round(stride_seconds / sec_per_sample)))
+
+    n = len(magnitudes)
+    if n <= w_samples:
+        # Whole-clip is shorter than window — return full span
+        return (0.0, n * sec_per_sample)
+
+    mags = np.array(magnitudes, dtype=np.float32)
+    best_start = 0
+    best_score = -1.0
+    for s in range(0, n - w_samples + 1, s_samples):
+        score = float(np.mean(mags[s : s + w_samples]))
+        if score > best_score:
+            best_score = score
+            best_start = s
+
+    start_s = best_start * sec_per_sample
+    end_s = (best_start + w_samples) * sec_per_sample
+    return (round(start_s, 2), round(end_s, 2))
+
+
 def _recalculate_overall_score(db) -> None:
     """Recompute the OverallDriverScore from all classical per-clip scores."""
     from api.models.db_models import ModelType, OverallDriverScore, Score
@@ -70,26 +171,57 @@ def _recalculate_overall_score(db) -> None:
     )
 
 
-def _anomaly_type_from_features(feature_importances: dict) -> str:
-    """
-    Pick an AnomalyType from the classical model's top feature importances.
+_FEATURE_TO_TYPE = {
+    # Sudden single-frame motion peaks → rapid deceleration, i.e. hard braking.
+    "flow_max":                "hard_braking",
+    "flow_p95":                "hard_braking",
+    "flow_p90":                "hard_braking",
+    "window_max_peak":         "hard_braking",
+    "max_consecutive_spikes":  "hard_braking",
+    # Erratic steering shows up as high variance in optical-flow direction.
+    "direction_variance":      "harsh_cornering",
+    # Frequent direction flips indicate crossing / weaving between lanes.
+    "direction_change_rate":   "lane_departure",
+    # Repeated magnitude spikes / sustained elevated motion → aggressive
+    # maneuvering (abrupt lane changes, darting through traffic).
+    "n_magnitude_spikes":      "aggressive_lane_change",
+    "spike_rate":              "aggressive_lane_change",
+    "window_n_flagged":        "aggressive_lane_change",
+    "window_max_mean":         "aggressive_lane_change",
+    "window_max_std":          "aggressive_lane_change",
+    "flow_std":                "aggressive_lane_change",
+    "flow_mean":               "aggressive_lane_change",
+    "flow_p75":                "aggressive_lane_change",
+    # Blur/edge noise isn't a useful behavioural signal on its own.
+    "blur_mean":               "other",
+    "blur_min":                "other",
+    "edge_density_std":        "other",
+    "edge_density_max_change": "other",
+}
 
-    The classical model is a single binary classifier; mapping its top-weighted
-    feature to a human-readable category keeps the UI's detail labels useful
-    instead of showing every flagged clip as "OTHER".
+
+def _anomaly_type_from_zscores(zscores: dict) -> str:
     """
-    if not feature_importances:
+    Pick an AnomalyType based on which feature is most anomalous *for this clip*.
+
+    `zscores` is produced by ClassicalClassifier.predict() — each entry is the
+    feature's value after StandardScaler, i.e. a z-score relative to the
+    training distribution. The feature with the largest positive z-score is
+    the one that makes this specific clip look unusual; mapping that feature
+    to a behavioural category gives a per-clip type (instead of every flagged
+    clip getting the same constant from global feature importance).
+    """
+    if not zscores:
         return "other"
-    top = max(feature_importances, key=feature_importances.get)
-    t = top.lower()
-    if "brake" in t or "decel" in t:
-        return "hard_braking"
-    if "lane" in t or "lateral" in t:
-        return "lane_departure"
-    if "corner" in t or "yaw" in t or "turn" in t:
-        return "harsh_cornering"
-    if "speed" in t or "accel" in t:
-        return "aggressive_lane_change"
+    # Rank by z-score descending and walk until we find a feature that maps
+    # to a specific behaviour. If the most-deviant feature is noise-ish
+    # (blur / edge_density), the next-most-deviant usually carries a real
+    # behavioural signal.
+    ranked = sorted(zscores.items(), key=lambda kv: kv[1], reverse=True)
+    for name, _z in ranked:
+        atype = _FEATURE_TO_TYPE.get(name, "other")
+        if atype != "other":
+            return atype
     return "other"
 
 
@@ -136,6 +268,15 @@ def process_clip(self, clip_id: str) -> dict:
         tmp_path = r2.download_to_temp(clip.r2_key_front)
         logger.info("[%s] Downloaded to %s", clip.filename_prefix, tmp_path)
 
+        # Backfill clip duration if we've never probed it. Needed so the UI
+        # can display real timestamps (anomaly timestamp_end uses this value)
+        # and the library's duration column stops showing "—".
+        if clip.duration_seconds is None:
+            probed = _probe_duration_seconds(tmp_path)
+            if probed is not None:
+                clip.duration_seconds = probed
+                db.commit()
+
         # 2. Feature extraction (cache by clip_id)
         cached = Path(f"data/processed/{clip_id}_features.npz")
         if not cached.exists():
@@ -165,13 +306,26 @@ def process_clip(self, clip_id: str) -> dict:
         score_inputs: list[AnomalyInput] = []
 
         if result.is_anomaly:
-            type_str = _anomaly_type_from_features(result.feature_importances)
+            type_str = _anomaly_type_from_zscores(result.feature_zscores)
             try:
                 atype = AnomalyType(type_str)
                 scoring_atype = ScoringAnomalyType(type_str)
             except ValueError:
                 atype = AnomalyType.OTHER
                 scoring_atype = ScoringAnomalyType.OTHER
+
+            top_zscores = dict(
+                sorted(result.feature_zscores.items(),
+                       key=lambda x: x[1], reverse=True)[:5]
+            )
+
+            # Localize the event within the clip so the UI can seek to it,
+            # rather than marking the whole clip.
+            peak = _locate_peak_window(tmp_path)
+            if peak is None:
+                ts_start, ts_end = 0.0, float(clip.duration_seconds or 0.0)
+            else:
+                ts_start, ts_end = peak
 
             score_inputs.append(AnomalyInput(scoring_atype, result.anomaly_probability))
             anomaly_rows.append(Anomaly(
@@ -180,14 +334,16 @@ def process_clip(self, clip_id: str) -> dict:
                 anomaly_type=atype,
                 severity=result.anomaly_probability,
                 confidence=result.anomaly_probability,
-                timestamp_start=0.0,
-                timestamp_end=float(clip.duration_seconds or 0.0),
+                timestamp_start=ts_start,
+                timestamp_end=ts_end,
                 score_impact=0.0,
                 detection_metadata={
-                    "top_features": dict(
+                    "top_deviant_features": {k: round(v, 3) for k, v in top_zscores.items()},
+                    "top_global_importances": dict(
                         sorted(result.feature_importances.items(),
                                key=lambda x: x[1], reverse=True)[:5]
                     ),
+                    "peak_window_seconds": [ts_start, ts_end],
                 },
             ))
 

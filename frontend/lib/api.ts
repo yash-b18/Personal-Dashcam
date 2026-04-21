@@ -162,6 +162,7 @@ export const api = {
     get: (id: string) => request<ClipDetail>(`/videos/${id}`),
     process: (id: string) => request<ProcessResponse>(`/videos/${id}/process`, { method: "POST" }),
     processAll: () => request<{ enqueued: number; status: string }>("/videos/process-all", { method: "POST" }),
+    reprocessAll: () => request<{ enqueued: number; status: string }>("/videos/reprocess-all", { method: "POST" }),
     upload: async (file: File, onProgress?: (pct: number) => void): Promise<ProcessResponse> => {
       // XMLHttpRequest lets us report upload progress; fetch does not.
       return new Promise((resolve, reject) => {

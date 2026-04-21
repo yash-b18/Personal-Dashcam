@@ -206,6 +206,9 @@ export default function TripsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
   const [processAllLoading, setProcessAllLoading] = useState(false);
+  const [reprocessAllLoading, setReprocessAllLoading] = useState(false);
+  const [reprocessConfirmOpen, setReprocessConfirmOpen] = useState(false);
+  const [toast, setToast] = useState<{ kind: "info" | "success" | "warn"; text: string } | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
 
@@ -229,10 +232,40 @@ export default function TripsPage() {
     return () => clearInterval(id);
   }, [hasProcessing, fetchClips]);
 
+  const showToast = (kind: "info" | "success" | "warn", text: string) => {
+    setToast({ kind, text });
+    setTimeout(() => setToast(null), 4500);
+  };
+
   const handleProcess = async (id: string) => { await api.clips.process(id); fetchClips(); };
   const handleProcessAll = async () => {
     setProcessAllLoading(true);
-    try { await api.clips.processAll(); fetchClips(); } finally { setProcessAllLoading(false); }
+    try {
+      const res = await api.clips.processAll();
+      if (res.enqueued === 0) {
+        showToast("info", "No pending clips to process.");
+      } else {
+        showToast("success", `Enqueued ${res.enqueued} pending clip${res.enqueued === 1 ? "" : "s"}.`);
+      }
+      fetchClips();
+    } catch {
+      showToast("warn", "Process-all request failed.");
+    } finally {
+      setProcessAllLoading(false);
+    }
+  };
+  const handleReprocessAll = async () => {
+    setReprocessConfirmOpen(false);
+    setReprocessAllLoading(true);
+    try {
+      const res = await api.clips.reprocessAll();
+      showToast("success", `Reprocessing ${res.enqueued} clip${res.enqueued === 1 ? "" : "s"} — this will take a while.`);
+      fetchClips();
+    } catch {
+      showToast("warn", "Reprocess-all request failed.");
+    } finally {
+      setReprocessAllLoading(false);
+    }
   };
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -306,8 +339,103 @@ export default function TripsPage() {
             <RefreshCw size={11} className={processAllLoading ? "animate-spin" : ""} />
             Process All
           </button>
+          <button
+            onClick={() => setReprocessConfirmOpen(true)}
+            disabled={reprocessAllLoading}
+            title="Re-run the pipeline on every clip, even ones already DONE"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-mono text-[10px] uppercase tracking-[0.16em] transition-all disabled:opacity-50"
+            style={{
+              background: "rgba(245,158,11,0.06)",
+              border: "1px solid rgba(245,158,11,0.35)",
+              color: "#F59E0B",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(245,158,11,0.14)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(245,158,11,0.06)"; }}
+          >
+            <RefreshCw size={11} className={reprocessAllLoading ? "animate-spin" : ""} />
+            Reprocess All
+          </button>
         </div>
       </motion.div>
+
+      {/* ── Toast ─────────────────────────────────────────────────────── */}
+      {toast && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          className="fixed top-6 right-6 z-50 px-4 py-3 rounded-lg font-mono text-[11px] tracking-[0.04em] shadow-2xl"
+          style={{
+            background:
+              toast.kind === "success" ? "rgba(16,185,129,0.12)"
+              : toast.kind === "warn" ? "rgba(244,63,94,0.12)"
+              : "rgba(34,211,238,0.10)",
+            border: `1px solid ${
+              toast.kind === "success" ? "rgba(16,185,129,0.45)"
+              : toast.kind === "warn" ? "rgba(244,63,94,0.45)"
+              : "rgba(34,211,238,0.35)"
+            }`,
+            color:
+              toast.kind === "success" ? "#6EE7B7"
+              : toast.kind === "warn" ? "#FCA5A5"
+              : "#67E8F9",
+            backdropFilter: "blur(8px)",
+          }}
+          onClick={() => setToast(null)}
+        >
+          {toast.text}
+        </motion.div>
+      )}
+
+      {/* ── Reprocess confirmation ───────────────────────────────────── */}
+      {reprocessConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(4,10,20,0.7)", backdropFilter: "blur(6px)" }}
+          onClick={() => setReprocessConfirmOpen(false)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-xl p-6"
+            style={{
+              background: "linear-gradient(180deg,#0B1726,#091523)",
+              border: "1px solid rgba(245,158,11,0.35)",
+            }}
+          >
+            <p className="section-label mb-2" style={{ color: "#F59E0B" }}>
+              Reprocess every clip?
+            </p>
+            <p className="text-[12px] leading-relaxed mb-5" style={{ color: "var(--color-ink-secondary)" }}>
+              This re-runs the classical pipeline on every clip in the library
+              (skipping only clips already in the processing queue). Existing
+              anomalies and scores for those clips are overwritten. With 626
+              clips this can take ~30–60 minutes.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setReprocessConfirmOpen(false)}
+                className="px-3 py-2 rounded-lg font-mono text-[10px] uppercase tracking-[0.16em]"
+                style={{ border: "1px solid var(--color-border)", color: "var(--color-ink-secondary)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReprocessAll}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-mono text-[10px] uppercase tracking-[0.16em]"
+                style={{
+                  background: "rgba(245,158,11,0.14)",
+                  border: "1px solid rgba(245,158,11,0.5)",
+                  color: "#F59E0B",
+                }}
+              >
+                <RefreshCw size={11} /> Reprocess All
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* ── Inline toolbar: filters + search ─────────────────────────── */}
       <motion.div

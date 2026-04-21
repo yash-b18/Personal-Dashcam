@@ -258,3 +258,26 @@ def process_all_pending(db: Session = Depends(get_db)) -> ProcessAllResponse:
         clip.processing_status = ProcessingStatus.PROCESSING
     db.commit()
     return ProcessAllResponse(enqueued=len(pending))
+
+
+@router.post("/reprocess-all", response_model=ProcessAllResponse)
+def reprocess_all(db: Session = Depends(get_db)) -> ProcessAllResponse:
+    """
+    Re-run the processing pipeline against every clip (DONE + FAILED + PENDING),
+    skipping clips that are already PROCESSING to avoid double-enqueue.
+
+    Useful after pipeline changes (e.g. switching the production model) so the
+    existing library is reclassified against the new code path.
+    """
+    from api.tasks.video_tasks import process_clip as celery_task
+
+    targets = (
+        db.query(Clip)
+        .filter(Clip.processing_status != ProcessingStatus.PROCESSING)
+        .all()
+    )
+    for clip in targets:
+        celery_task.delay(str(clip.id))
+        clip.processing_status = ProcessingStatus.PROCESSING
+    db.commit()
+    return ProcessAllResponse(enqueued=len(targets))

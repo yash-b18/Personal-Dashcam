@@ -48,6 +48,11 @@ class ClassicalResult:
     is_anomaly: bool
     anomaly_probability: float          # 0.0 – 1.0
     feature_importances: dict[str, float] = field(default_factory=dict)
+    # Per-clip standardised feature values (z-scores vs the training
+    # distribution). The most-positive z-score identifies which feature
+    # makes *this* clip look abnormal — used downstream to pick a
+    # per-clip anomaly type rather than a global constant.
+    feature_zscores: dict[str, float] = field(default_factory=dict)
 
 
 class ClassicalAnomalyClassifier:
@@ -220,11 +225,18 @@ class ClassicalAnomalyClassifier:
         if hasattr(self._model, "feature_importances_"):
             importances = dict(zip(names, self._model.feature_importances_.tolist()))
 
+        # X is already standardised by StandardScaler, so each entry IS a
+        # z-score of that feature vs the training population. The most
+        # positive entry indicates which feature is most anomalous for
+        # this specific clip.
+        zscores = dict(zip(names, X[0].tolist()))
+
         return ClassicalResult(
             clip_id=clip_id,
             is_anomaly=is_anomaly,
             anomaly_probability=prob,
             feature_importances=importances,
+            feature_zscores=zscores,
         )
 
     def predict_batch(

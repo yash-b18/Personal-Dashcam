@@ -323,22 +323,12 @@ function AnomalyModal({ id, onClose }: { id: string; onClose: () => void }) {
                     <SeverityBar severity={detail.severity} />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-                    {[
-                      { k: "Clip",    v: detail.clip_filename ?? "—" },
-                      { k: "Model",   v: detail.model_type },
-                      { k: "Detected", v: formatDate(detail.detected_at) },
-                      { k: "Clip ID", v: String(detail.clip_id).slice(0, 8) + "…" },
-                    ].map(({ k, v }) => (
-                      <div
-                        key={k}
-                        className="flex items-center justify-between rounded-lg px-3 py-2"
-                        style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
-                      >
-                        <span style={{ color: "var(--color-ink-tertiary)" }}>{k}</span>
-                        <span style={{ color: "var(--color-ink-primary)" }}>{v}</span>
-                      </div>
-                    ))}
+                  <div
+                    className="flex items-center justify-between rounded-lg px-3 py-2 font-mono text-[11px]"
+                    style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
+                  >
+                    <span style={{ color: "var(--color-ink-tertiary)" }}>Clip</span>
+                    <span style={{ color: "var(--color-ink-primary)" }}>{detail.clip_filename ?? "—"}</span>
                   </div>
                 </div>
               )}
