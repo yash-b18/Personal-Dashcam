@@ -217,7 +217,7 @@ def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
     2. decord (with downscale) — software but seeks properly
     3. cv2 — last-ditch sequential decode
     """
-    global _SAMPLER_LOGGED
+    global _SAMPLER_LOGGED, _NVDEC_AVAILABLE
     if _check_ffmpeg_nvdec():
         if not _SAMPLER_LOGGED:
             logger.info("  frame sampler: ffmpeg NVDEC (h264_cuvid)")
@@ -225,8 +225,12 @@ def _sample_frames(video_path: Path, target_fps: float) -> list[np.ndarray]:
         try:
             return _sample_frames_nvdec(video_path, target_fps)
         except Exception as exc:
-            logger.warning("NVDEC decode failed on %s (%s); falling back to decord/cv2",
-                           video_path.name, exc)
+            # h264_cuvid codec isn't in Colab's stock ffmpeg even though
+            # `-hwaccels` lists cuda. Disable permanently to stop per-clip retries.
+            logger.warning("NVDEC decode failed (%s) — disabling NVDEC for this run.",
+                           exc)
+            _NVDEC_AVAILABLE = False
+            _SAMPLER_LOGGED = False
     try:
         import decord  # noqa: F401
         if not _SAMPLER_LOGGED:
@@ -272,6 +276,36 @@ def _aggregate(detections: list[dict], frame_area: float) -> np.ndarray:
     return vec
 
 
+def _predict_on_frames(
+    frames: list[np.ndarray],
+    model,
+    conf: float,
+    imgsz: int,
+    device: str | None,
+) -> np.ndarray:
+    """Run YOLO on pre-decoded frames and return the 20-dim feature vector."""
+    if not frames:
+        return _zero_vector()
+    frame_area = float(frames[0].shape[0] * frames[0].shape[1])
+    use_half = bool(device and device.startswith("cuda"))
+    results = model.predict(
+        frames, imgsz=imgsz, conf=conf, device=device,
+        half=use_half, verbose=False,
+    )
+    per_frame: list = []
+    for r in results:
+        if r.boxes is None or len(r.boxes) == 0:
+            per_frame.append([])
+            continue
+        cls = r.boxes.cls.cpu().numpy().astype(int)
+        xyxy = r.boxes.xyxy.cpu().numpy()
+        widths = xyxy[:, 2] - xyxy[:, 0]
+        heights = xyxy[:, 3] - xyxy[:, 1]
+        areas = widths * heights
+        per_frame.append(list(zip(cls, areas)))
+    return _aggregate(per_frame, frame_area).astype(np.float32)
+
+
 def extract_yolo_features(
     video_path: str | Path,
     model,
@@ -291,35 +325,12 @@ def extract_yolo_features(
             timings.update(decode_s=decode_s, predict_s=0.0, n_frames=0)
         return _zero_vector()
 
-    frame_area = float(frames[0].shape[0] * frames[0].shape[1])
-
-    use_half = bool(device and device.startswith("cuda"))
     t1 = time.perf_counter()
-    results = model.predict(
-        frames,
-        imgsz=imgsz,
-        conf=conf,
-        device=device,
-        half=use_half,
-        verbose=False,
-    )
+    vec = _predict_on_frames(frames, model, conf, imgsz, device)
     predict_s = time.perf_counter() - t1
     if timings is not None:
         timings.update(decode_s=decode_s, predict_s=predict_s, n_frames=len(frames))
-
-    per_frame: list = []
-    for r in results:
-        if r.boxes is None or len(r.boxes) == 0:
-            per_frame.append([])
-            continue
-        cls = r.boxes.cls.cpu().numpy().astype(int)
-        xyxy = r.boxes.xyxy.cpu().numpy()
-        widths = xyxy[:, 2] - xyxy[:, 0]
-        heights = xyxy[:, 3] - xyxy[:, 1]
-        areas = widths * heights
-        per_frame.append(list(zip(cls, areas)))
-
-    return _aggregate(per_frame, frame_area).astype(np.float32)
+    return vec
 
 
 def _warmup_model(model, imgsz: int, device: str | None) -> None:
@@ -521,8 +532,9 @@ def _download_clip(client, bucket: str, key: str) -> Path:
 def _run_from_manifest(args: argparse.Namespace, model) -> None:
     """DB-free mode for Colab: read a JSON manifest and pull clips from R2.
 
-    Overlaps R2 downloads with GPU inference via a bounded prefetch pool so the
-    GPU isn't idle between network-bound steps.
+    Worker threads both download AND decode frames in parallel. The main
+    thread only runs GPU inference. This saturates the L4's single decode
+    engine + CPU cores on decode while the GPU stays busy on predict().
     """
     entries = json.loads(args.manifest.read_text())
     if not entries:
@@ -544,62 +556,71 @@ def _run_from_manifest(args: argparse.Namespace, model) -> None:
         logger.info("All %d manifest entries already processed.", skipped)
         return
 
-    # Semaphore bounds how many downloaded-but-not-yet-consumed clips can sit
-    # on disk, so a slow GPU can't let the prefetch queue fill local storage.
+    # Bound the in-flight (frames-in-RAM) queue so prefetch can't blow memory.
+    # ~121 frames × 640×384×3 ≈ 90 MB per clip, so prefetch=8 → ~720 MB.
     slot = Semaphore(args.prefetch)
 
-    def _download(entry: dict) -> tuple[str, Path, float]:
+    def _download_and_decode(entry: dict) -> dict:
         slot.acquire()
-        t0 = time.perf_counter()
+        tmp_path = None
         try:
-            path = _download_clip(client, bucket, entry["r2_key_front"])
-            return entry["clip_id"], path, time.perf_counter() - t0
+            t0 = time.perf_counter()
+            tmp_path = _download_clip(client, bucket, entry["r2_key_front"])
+            dl_s = time.perf_counter() - t0
+            t1 = time.perf_counter()
+            frames = _sample_frames(tmp_path, SAMPLE_FPS)
+            decode_s = time.perf_counter() - t1
+            return {
+                "clip_id": entry["clip_id"],
+                "r2_key": entry["r2_key_front"],
+                "frames": frames,
+                "dl_s": dl_s,
+                "decode_s": decode_s,
+            }
         except Exception:
             slot.release()
             raise
+        finally:
+            if tmp_path and tmp_path.exists():
+                tmp_path.unlink()
 
     extracted = failed = 0
-    n_debug = 5  # per-stage timing for the first N clips
+    n_debug = 5
     with ThreadPoolExecutor(max_workers=args.download_workers) as pool:
-        futures = {pool.submit(_download, e): e for e in pending}
+        futures = [pool.submit(_download_and_decode, e) for e in pending]
         pbar = tqdm(as_completed(futures), total=len(pending),
                     desc="YOLO features", unit="clip")
         for fut in pbar:
-            entry = futures[fut]
-            clip_id = entry["clip_id"]
-            tmp_path = None
             try:
-                clip_id, tmp_path, dl_s = fut.result()
-                t1 = time.perf_counter()
-                timings: dict = {}
-                vec = extract_yolo_features(tmp_path, model, imgsz=args.imgsz,
-                                            device=args.device, timings=timings)
-                infer_s = time.perf_counter() - t1
+                item = fut.result()
+                clip_id = item["clip_id"]
+                t2 = time.perf_counter()
+                vec = _predict_on_frames(
+                    item["frames"], model,
+                    conf=CONF_THRESHOLD, imgsz=args.imgsz, device=args.device,
+                )
+                predict_s = time.perf_counter() - t2
                 save_yolo_features(clip_id, vec, out_dir=args.output_dir)
                 extracted += 1
                 if extracted <= n_debug:
                     logger.info(
                         "  [timing %d] dl=%.2fs decode=%.2fs predict=%.2fs "
-                        "(%d frames) total_infer=%.2fs",
-                        extracted, dl_s,
-                        timings.get("decode_s", 0.0),
-                        timings.get("predict_s", 0.0),
-                        timings.get("n_frames", 0),
-                        infer_s,
+                        "(%d frames, queued)",
+                        extracted, item["dl_s"], item["decode_s"],
+                        predict_s, len(item["frames"]),
                     )
             except Exception as exc:
-                logger.error("Failed on %s (%s): %s", clip_id, entry["r2_key_front"], exc)
+                logger.error("Failed: %s", exc)
                 failed += 1
             finally:
-                if tmp_path and tmp_path.exists():
-                    tmp_path.unlink()
                 slot.release()
 
     logger.info("── YOLO Feature Extraction (manifest) ──────")
     logger.info("  Extracted: %d", extracted)
     logger.info("  Skipped:   %d", skipped)
     logger.info("  Failed:    %d", failed)
-    logger.info("  Workers:   %d download / prefetch=%d", args.download_workers, args.prefetch)
+    logger.info("  Workers:   %d dl+decode / prefetch=%d",
+                args.download_workers, args.prefetch)
     logger.info("  Output:    %s/", args.output_dir)
 
 
