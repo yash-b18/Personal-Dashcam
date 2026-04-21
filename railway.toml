@@ -22,7 +22,14 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "alembic upgrade head && echo '=== alembic OK, launching uvicorn ===' && uvicorn app:app --host 0.0.0.0 --port $PORT --workers 1"
+# Railway's private network is lazy-initialized and IPv6-only:
+#   - preDeployCommand runs with the PUBLIC Postgres URL, so alembic can
+#     connect before the service's private network comes up
+#   - startCommand binds uvicorn to :: (IPv6) so Railway's healthcheck proxy
+#     can reach it over the private network — binding to 0.0.0.0 alone
+#     silently fails the /health probe
+preDeployCommand = "alembic upgrade head"
+startCommand = "uvicorn app:app --host :: --port $PORT --workers 1"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
